@@ -1,10 +1,11 @@
 import torch
-import ppg_demosaic_cuda
+
 import argparse
 from pathlib import Path
 from PIL import Image
 import numpy as np
 
+from cuda_demosaic import ppg_demosaic, rcd_demosaic, BayerPattern
 
 def rgb_to_bayer(image_path: Path) -> torch.Tensor:
     """Load RGB image and convert to Bayer pattern."""
@@ -30,8 +31,9 @@ def rgb_to_bayer(image_path: Path) -> torch.Tensor:
     return tensor
 
 
-def test_ppg_demosaic(image_path: Path, filters: int = 0x94949494):
-    """Test PPG demosaic on a real image."""
+def test_demosaic(image_path: Path, pattern: BayerPattern, algorithm: str = "ppg", 
+                 median_threshold: float | None = None, input_scale: float = 1.0, output_scale: float = 1.0):
+    """Test demosaic on a real image."""
     print(f"Loading image: {image_path}")
     
     # Convert RGB image to Bayer pattern
@@ -42,41 +44,44 @@ def test_ppg_demosaic(image_path: Path, filters: int = 0x94949494):
     print(f"Input range: {bayer_input.min().item():.3f} - {bayer_input.max().item():.3f}")
     
     # Run demosaic
-    print("Running PPG demosaic...")
-    result = ppg_demosaic_cuda.ppg_demosaic(bayer_input, filters)
+    if algorithm.lower() == "ppg":
+        print("Running PPG demosaic...")
+        result = ppg_demosaic(bayer_input, pattern, median_threshold=median_threshold)
+    elif algorithm.lower() == "rcd":
+        print("Running RCD demosaic...")
+        result = rcd_demosaic(bayer_input, pattern, input_scale=input_scale, output_scale=output_scale)
+    else:
+        raise ValueError(f"Unknown algorithm: {algorithm}. Choose 'ppg' or 'rcd'")
     
-    print(f"Output shape: {result.shape}")
-    
-    # Check results
-    r_channel = result[:, :, 0]
-    g_channel = result[:, :, 1] 
-    b_channel = result[:, :, 2]
-    
-    print(f"Red range: {r_channel.min().item():.3f} - {r_channel.max().item():.3f}")
-    print(f"Green range: {g_channel.min().item():.3f} - {g_channel.max().item():.3f}")
-    print(f"Blue range: {b_channel.min().item():.3f} - {b_channel.max().item():.3f}")
-    
-    # Save result
-    output_path = image_path.with_suffix('.demosaiced.png')
-    
-    # Convert back to PIL and save
+  
     rgb = result[:, :, :3].clamp(0, 1)
     rgb_np = (rgb.cpu().numpy() * 255).astype(np.uint8)
-    Image.fromarray(rgb_np).save(output_path)
+    image = Image.fromarray(rgb_np)
+    image.show()
     
-    print(f"Saved demosaiced image: {output_path}")
+    
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Test PPG demosaic on an image')
+    parser = argparse.ArgumentParser(description='Test demosaic algorithms on an image')
     parser.add_argument('image', type=Path, help='Input image path')
-    parser.add_argument('--filters', type=lambda x: int(x, 16), default=0x94949494,
-                       help='Bayer pattern (hex, default: 0x94949494 for RGGB)')
+    parser.add_argument('--pattern', type=str, default='RGGB', choices=[pattern.name for pattern in BayerPattern],
+                       help='Bayer pattern')
+    parser.add_argument('--algorithm', type=str, default='ppg', choices=['ppg', 'rcd'],
+                       help='Demosaic algorithm to use')
+    parser.add_argument('--median_threshold', type=float, default=None,
+                       help='Median threshold (PPG only)')
+
+    parser.add_argument('--input_scale', type=float, default=1.0,
+                       help='Input scaling factor (RCD only)')
+    parser.add_argument('--output_scale', type=float, default=1.0,
+                       help='Output scaling factor (RCD only)')
     
     args = parser.parse_args()
     
     try:
-        test_ppg_demosaic(args.image, args.filters)
+        test_demosaic(args.image, BayerPattern[args.pattern], args.algorithm,
+                     args.median_threshold, args.input_scale, args.output_scale)
     except Exception as e:
         print(f"Error: {e}")
         return 1
