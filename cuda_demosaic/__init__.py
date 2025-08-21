@@ -5,5 +5,5 @@ This package provides a standalone implementation of the PPG (Pattern Pixel Grou
 demosaic algorithm extracted from darktable, optimized for GPU execution with PyTorch.
 """
 
-from .demosaic import ppg_demosaic, rcd_demosaic, BayerPattern
-__all__ = ["ppg_demosaic", "rcd_demosaic", "BayerPattern"]
+from .demosaic import ppg_demosaic, rcd_demosaic, postprocess_demosaic, BayerPattern
+__all__ = ["ppg_demosaic", "rcd_demosaic", "postprocess_demosaic", "BayerPattern"]

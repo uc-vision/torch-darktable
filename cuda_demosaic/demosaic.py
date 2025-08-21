@@ -25,7 +25,8 @@ def _load_cuda_extension():
     sources = [
         str(source_dir / "demosaic.cpp"),
         str(source_dir / "ppg_kernels.cu"),
-        str(source_dir / "rcd_kernels.cu")
+        str(source_dir / "rcd_kernels.cu"),
+        str(source_dir / "postprocess_kernels.cu")
     ]
     
     return cpp_extension.load(
@@ -98,5 +99,47 @@ def rcd_demosaic(
     
 
     result = demosaic_cuda.rcd_demosaic(raw_image, bayer_pattern.value, input_scale, output_scale)
+    return result[:, :, :3]
+
+
+def postprocess_demosaic(
+              demosaiced_image: torch.Tensor,
+              bayer_pattern: BayerPattern,
+              color_smoothing_passes: int = 0,
+              green_eq_local: bool = False,
+              green_eq_global: bool = False,
+              green_eq_threshold: float = 0.0001) -> torch.Tensor:
+    """
+    Apply post-processing to demosaiced image (color smoothing and green equilibration).
+    
+    Args:
+        demosaiced_image: Input demosaiced image tensor of shape (H, W, 3) or (H, W, 4)
+                         Must be on CUDA device and float32 dtype
+        bayer_pattern: Bayer pattern used for green equilibration
+        color_smoothing_passes: Number of color smoothing passes (0 to disable)
+        green_eq_local: Enable local green equilibration
+        green_eq_global: Enable global green equilibration  
+        green_eq_threshold: Threshold for green equilibration (typically 0.0001 * ISO)
+                        
+    Returns:
+        Post-processed RGB image of shape (H, W, 3)
+    """
+    
+    assert demosaiced_image.dim() == 3, "Input must be 3D tensor"
+    assert demosaiced_image.size(2) in [3, 4], "Input must have 3 or 4 channels"
+    assert demosaiced_image.device.type == 'cuda', "Input must be on CUDA device"
+    assert demosaiced_image.dtype == torch.float32, "Input must be float32 dtype"
+    
+    # Convert to 4-channel if needed (add alpha channel)
+    if demosaiced_image.size(2) == 3:
+        alpha = torch.zeros(demosaiced_image.shape[:2] + (1,), 
+                           dtype=demosaiced_image.dtype, device=demosaiced_image.device)
+        input_4ch = torch.cat([demosaiced_image, alpha], dim=2)
+    else:
+        input_4ch = demosaiced_image
+    
+    result = demosaic_cuda.postprocess_demosaic(input_4ch, bayer_pattern.value, 
+                                              color_smoothing_passes, green_eq_local, 
+                                              green_eq_global, green_eq_threshold)
     return result[:, :, :3]
 

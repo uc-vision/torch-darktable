@@ -1,0 +1,471 @@
+/*
+ * Post-Processing CUDA Kernels for Demosaicing
+ * Color smoothing and green equilibration algorithms
+ * Converted from OpenCL kernels for better PyTorch integration
+ */
+
+#include <cuda_runtime.h>
+#include <device_launch_parameters.h>
+#include <torch/types.h>
+#include <ATen/ATen.h>
+#include <c10/cuda/CUDAStream.h>
+#include <cstdint>
+
+// FC macro for Bayer pattern (from darktable)
+#define FC(row, col, filters) ((filters >> ((((row) << 1 & 14) + ((col) & 1)) << 1)) & 3)
+
+// Compare and swap macro for sorting network
+#define cas(a, b) \
+    do { \
+        float x = a; \
+        int c = a > b; \
+        a = c ? b : a; \
+        b = c ? x : b; \
+    } while (0)
+
+/**
+ * Color smoothing using 3x3 median filter
+ * Uses a sorting network to sort entirely in registers with no branches
+ * Applied to R-G and B-G differences to preserve luminance
+ */
+__global__ void color_smoothing_kernel(
+    float4* input,
+    float4* output,
+    int width,
+    int height
+) {
+    extern __shared__ float4 smoothing_buffer[];
+    
+    const int lxid = threadIdx.x;
+    const int lyid = threadIdx.y;
+    const int x = blockIdx.x * blockDim.x + threadIdx.x;
+    const int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    const int lxsz = blockDim.x;
+    const int buffwd = lxsz + 2;
+    const int buffsz = (blockDim.x + 2) * (blockDim.y + 2);
+    const int gsz = blockDim.x * blockDim.y;
+    const int lidx = lyid * lxsz + lxid;
+
+    const int nchunks = buffsz % gsz == 0 ? buffsz/gsz - 1 : buffsz/gsz;
+
+    for(int n = 0; n <= nchunks; n++)
+    {
+        const int bufidx = (n * gsz) + lidx;
+        if(bufidx >= buffsz) break;
+
+        // get position in buffer coordinates and from there translate to position in global coordinates
+        const int gx = (bufidx % buffwd) - 1 + x - lxid;
+        const int gy = (bufidx / buffwd) - 1 + y - lyid;
+
+        // don't read more than needed
+        if(gx >= width + 1 || gy >= height + 1) continue;
+
+        smoothing_buffer[bufidx] = (gx >= 0 && gy >= 0 && gx < width && gy < height) ? 
+                                   input[gy * width + gx] : make_float4(0.0f, 0.0f, 0.0f, 0.0f);
+    }
+
+    __syncthreads();
+
+    if(x >= width || y >= height) return;
+
+    // re-position buffer
+    float4* centered_buffer = smoothing_buffer + (lyid + 1) * buffwd + lxid + 1;
+
+    float4 o = centered_buffer[0];
+
+    // 3x3 median for R (R-G difference)
+    float s0 = centered_buffer[-buffwd - 1].x - centered_buffer[-buffwd - 1].y;
+    float s1 = centered_buffer[-buffwd].x - centered_buffer[-buffwd].y;
+    float s2 = centered_buffer[-buffwd + 1].x - centered_buffer[-buffwd + 1].y;
+    float s3 = centered_buffer[-1].x - centered_buffer[-1].y;
+    float s4 = centered_buffer[0].x - centered_buffer[0].y;
+    float s5 = centered_buffer[1].x - centered_buffer[1].y;
+    float s6 = centered_buffer[buffwd - 1].x - centered_buffer[buffwd - 1].y;
+    float s7 = centered_buffer[buffwd].x - centered_buffer[buffwd].y;
+    float s8 = centered_buffer[buffwd + 1].x - centered_buffer[buffwd + 1].y;
+
+    cas(s1, s2);
+    cas(s4, s5);
+    cas(s7, s8);
+    cas(s0, s1);
+    cas(s3, s4);
+    cas(s6, s7);
+    cas(s1, s2);
+    cas(s4, s5);
+    cas(s7, s8);
+    cas(s0, s3);
+    cas(s5, s8);
+    cas(s4, s7);
+    cas(s3, s6);
+    cas(s1, s4);
+    cas(s2, s5);
+    cas(s4, s7);
+    cas(s4, s2);
+    cas(s6, s4);
+    cas(s4, s2);
+
+    o.x = fmaxf(s4 + o.y, 0.0f);
+
+    // 3x3 median for B (B-G difference)
+    s0 = centered_buffer[-buffwd - 1].z - centered_buffer[-buffwd - 1].y;
+    s1 = centered_buffer[-buffwd].z - centered_buffer[-buffwd].y;
+    s2 = centered_buffer[-buffwd + 1].z - centered_buffer[-buffwd + 1].y;
+    s3 = centered_buffer[-1].z - centered_buffer[-1].y;
+    s4 = centered_buffer[0].z - centered_buffer[0].y;
+    s5 = centered_buffer[1].z - centered_buffer[1].y;
+    s6 = centered_buffer[buffwd - 1].z - centered_buffer[buffwd - 1].y;
+    s7 = centered_buffer[buffwd].z - centered_buffer[buffwd].y;
+    s8 = centered_buffer[buffwd + 1].z - centered_buffer[buffwd + 1].y;
+
+    cas(s1, s2);
+    cas(s4, s5);
+    cas(s7, s8);
+    cas(s0, s1);
+    cas(s3, s4);
+    cas(s6, s7);
+    cas(s1, s2);
+    cas(s4, s5);
+    cas(s7, s8);
+    cas(s0, s3);
+    cas(s5, s8);
+    cas(s4, s7);
+    cas(s3, s6);
+    cas(s1, s4);
+    cas(s2, s5);
+    cas(s4, s7);
+    cas(s4, s2);
+    cas(s6, s4);
+    cas(s4, s2);
+
+    o.z = fmaxf(s4 + o.y, 0.0f);
+
+    output[y * width + x] = make_float4(fmaxf(o.x, 0.0f), fmaxf(o.y, 0.0f), fmaxf(o.z, 0.0f), o.w);
+}
+
+/**
+ * Green equilibration - local averaging approach
+ * Corrects green channel imbalance using local neighborhood analysis
+ */
+__global__ void green_eq_local_kernel(
+    float4* input,
+    float4* output,
+    int width,
+    int height,
+    uint32_t filters,
+    float threshold
+) {
+    extern __shared__ float green_eq_buffer[];
+    
+    const int x = blockIdx.x * blockDim.x + threadIdx.x;
+    const int y = blockIdx.y * blockDim.y + threadIdx.y;
+    const int xlsz = blockDim.x;
+    const int ylsz = blockDim.y;
+    const int xlid = threadIdx.x;
+    const int ylid = threadIdx.y;
+    const int xgid = blockIdx.x;
+    const int ygid = blockIdx.y;
+
+    // individual control variable in this work group and the work group size
+    const int l = ylid * xlsz + xlid;
+    const int lsz = xlsz * ylsz;
+
+    // stride and maximum capacity of local buffer
+    // cells of 1*float per pixel with a surrounding border of 2 cells
+    const int stride = xlsz + 2*2;
+    const int maxbuf = stride * (ylsz + 2*2);
+
+    // coordinates of top left pixel of buffer
+    // this is 2 pixel left and above of the work group origin
+    const int xul = xgid * xlsz - 2;
+    const int yul = ygid * ylsz - 2;
+
+    // populate local memory buffer
+    for(int n = 0; n <= maxbuf/lsz; n++)
+    {
+        const int bufidx = n * lsz + l;
+        if(bufidx >= maxbuf) continue;
+        const int xx = xul + bufidx % stride;
+        const int yy = yul + bufidx / stride;
+        green_eq_buffer[bufidx] = (xx >= 0 && yy >= 0 && xx < width && yy < height) ? 
+                                  input[yy * width + xx].y : 0.0f; // Green channel only
+    }
+
+    // center buffer around current x,y-Pixel
+    float* centered_buffer = green_eq_buffer + (ylid + 2) * stride + xlid + 2;
+
+    __syncthreads();
+
+    if(x >= width || y >= height) return;
+
+    const int c = FC(y, x, filters);
+    const float maximum = 1.0f;
+    float4 pixel = input[y * width + x];
+    float o = pixel.y; // Start with green channel
+
+    if(c == 1 && (y & 1)) // Green2 pixels (odd rows)
+    {
+        const float o1_1 = centered_buffer[-1 * stride - 1];
+        const float o1_2 = centered_buffer[-1 * stride + 1];
+        const float o1_3 = centered_buffer[ 1 * stride - 1];
+        const float o1_4 = centered_buffer[ 1 * stride + 1];
+        const float o2_1 = centered_buffer[-2 * stride + 0];
+        const float o2_2 = centered_buffer[ 2 * stride + 0];
+        const float o2_3 = centered_buffer[-2];
+        const float o2_4 = centered_buffer[ 2];
+
+        const float m1 = (o1_1 + o1_2 + o1_3 + o1_4) / 4.0f;
+        const float m2 = (o2_1 + o2_2 + o2_3 + o2_4) / 4.0f;
+
+        if ((m2 > 0.0f) && (m1 > 0.0f) && (m1 / m2 < maximum * 2.0f))
+        {
+            const float c1 = (fabsf(o1_1 - o1_2) + fabsf(o1_1 - o1_3) + fabsf(o1_1 - o1_4) + 
+                              fabsf(o1_2 - o1_3) + fabsf(o1_3 - o1_4) + fabsf(o1_2 - o1_4)) / 6.0f;
+            const float c2 = (fabsf(o2_1 - o2_2) + fabsf(o2_1 - o2_3) + fabsf(o2_1 - o2_4) + 
+                              fabsf(o2_2 - o2_3) + fabsf(o2_3 - o2_4) + fabsf(o2_2 - o2_4)) / 6.0f;
+
+            if((o < maximum * 0.95f) && (c1 < maximum * threshold) && (c2 < maximum * threshold))
+                o *= m1 / m2;
+        }
+    }
+
+    pixel.y = fmaxf(o, 0.0f);
+    output[y * width + x] = pixel;
+}
+
+/**
+ * Green equilibration - global averaging first pass
+ * Reduces green channel values across work groups
+ */
+__global__ void green_eq_global_reduce_first_kernel(
+    float4* input,
+    int width,
+    int height,
+    float2* accu,
+    uint32_t filters
+) {
+    extern __shared__ float2 reduce_buffer[];
+    
+    const int x = blockIdx.x * blockDim.x + threadIdx.x;
+    const int y = blockIdx.y * blockDim.y + threadIdx.y;
+    const int xlsz = blockDim.x;
+    const int ylsz = blockDim.y;
+    const int xlid = threadIdx.x;
+    const int ylid = threadIdx.y;
+
+    const int l = ylid * xlsz + xlid;
+
+    const int c = FC(y, x, filters);
+
+    const int isinimage = (x < 2 * (width / 2) && y < 2 * (height / 2));
+    const int isgreen1 = (c == 1 && !(y & 1));
+    const int isgreen2 = (c == 1 && (y & 1));
+
+    float pixel = (x < width && y < height) ? input[y * width + x].y : 0.0f;
+
+    reduce_buffer[l].x = isinimage && isgreen1 ? pixel : 0.0f;
+    reduce_buffer[l].y = isinimage && isgreen2 ? pixel : 0.0f;
+
+    __syncthreads();
+
+    const int lsz = xlsz * ylsz;
+
+    for(int offset = lsz / 2; offset > 0; offset = offset / 2)
+    {
+        if(l < offset)
+        {
+            reduce_buffer[l] = make_float2(reduce_buffer[l].x + reduce_buffer[l + offset].x,
+                                          reduce_buffer[l].y + reduce_buffer[l + offset].y);
+        }
+        __syncthreads();
+    }
+
+    const int xgid = blockIdx.x;
+    const int ygid = blockIdx.y;
+    const int xgsz = gridDim.x;
+
+    const int m = ygid * xgsz + xgid;
+    if(l == 0)
+        accu[m] = reduce_buffer[0];
+}
+
+/**
+ * Green equilibration - global averaging second pass
+ * Final reduction across all work groups
+ */
+__global__ void green_eq_global_reduce_second_kernel(
+    const float2* input,
+    float2* result,
+    int length
+) {
+    extern __shared__ float2 reduce2_buffer[];
+    
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    float2 sum = make_float2(0.0f, 0.0f);
+
+    while(x < length)
+    {
+        sum = make_float2(sum.x + input[x].x, sum.y + input[x].y);
+        x += blockDim.x * gridDim.x;
+    }
+
+    int lid = threadIdx.x;
+    reduce2_buffer[lid] = sum;
+
+    __syncthreads();
+
+    for(int offset = blockDim.x / 2; offset > 0; offset = offset / 2)
+    {
+        if(lid < offset)
+        {
+            reduce2_buffer[lid] = make_float2(reduce2_buffer[lid].x + reduce2_buffer[lid + offset].x,
+                                             reduce2_buffer[lid].y + reduce2_buffer[lid + offset].y);
+        }
+        __syncthreads();
+    }
+
+    if(lid == 0)
+    {
+        const int gid = blockIdx.x;
+        result[gid] = reduce2_buffer[0];
+    }
+}
+
+/**
+ * Green equilibration - global averaging apply correction
+ * Applies the calculated global ratio to Green1 pixels
+ */
+__global__ void green_eq_global_apply_kernel(
+    float4* input,
+    float4* output,
+    int width,
+    int height,
+    uint32_t filters,
+    float gr_ratio
+) {
+    const int x = blockIdx.x * blockDim.x + threadIdx.x;
+    const int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if(x >= width || y >= height) return;
+
+    float4 pixel = input[y * width + x];
+
+    const int c = FC(y, x, filters);
+    const int isgreen1 = (c == 1 && !(y & 1));
+
+    pixel.y *= (isgreen1 ? gr_ratio : 1.0f);
+
+    output[y * width + x] = make_float4(fmaxf(pixel.x, 0.0f), fmaxf(pixel.y, 0.0f), 
+                                       fmaxf(pixel.z, 0.0f), pixel.w);
+}
+
+#undef cas
+
+// Post-processing orchestration function
+torch::Tensor postprocess_demosaic_cuda(torch::Tensor input, uint32_t filters, 
+                                       int color_smoothing_passes, bool green_eq_local, 
+                                       bool green_eq_global, float green_eq_threshold) {
+    // Input validation
+    TORCH_CHECK(input.device().is_cuda(), "Input tensor must be on CUDA device");
+    TORCH_CHECK(input.dtype() == torch::kFloat32, "Input tensor must be float32");
+    TORCH_CHECK(input.dim() == 3, "Input tensor must be 3D (H, W, 4)");
+    TORCH_CHECK(input.size(2) == 4, "Input must have 4 channels (RGBA)");
+    
+    // Ensure input is contiguous
+    input = input.contiguous();
+    
+    const int height = input.size(0);
+    const int width = input.size(1);
+    
+    // Create working buffers
+    auto output = input.clone();
+    auto temp_buffer = torch::zeros_like(input);
+    
+    // Get CUDA stream
+    auto stream = at::cuda::getCurrentCUDAStream().stream();
+    
+    // Setup grid and block dimensions
+    dim3 block(16, 16);
+    dim3 grid((width + block.x - 1) / block.x, (height + block.y - 1) / block.y);
+    
+    // Color smoothing (multiple passes using ping-pong buffers)
+    if(color_smoothing_passes > 0) {
+        const int smoothing_shared_size = (block.x + 2) * (block.y + 2) * sizeof(float4);
+        
+        float4* buffer1 = reinterpret_cast<float4*>(output.data_ptr<float>());
+        float4* buffer2 = reinterpret_cast<float4*>(temp_buffer.data_ptr<float>());
+        
+        for(int pass = 0; pass < color_smoothing_passes; pass++) {
+            color_smoothing_kernel<<<grid, block, smoothing_shared_size, stream>>>(
+                buffer1, buffer2, width, height);
+            
+            // Swap buffers
+            float4* temp = buffer1;
+            buffer1 = buffer2;
+            buffer2 = temp;
+        }
+        
+        // Ensure final result is in output buffer
+        if(color_smoothing_passes % 2 == 1) {
+            cudaMemcpyAsync(output.data_ptr<float>(), temp_buffer.data_ptr<float>(), 
+                           height * width * 4 * sizeof(float), cudaMemcpyDeviceToDevice, stream);
+        }
+    }
+    
+    // Green equilibration - global
+    if(green_eq_global) {
+        // Allocate reduction buffers
+        const int num_blocks = grid.x * grid.y;
+        auto reduce_buffer1 = torch::zeros({num_blocks, 2}, 
+                                          torch::TensorOptions().dtype(torch::kFloat32).device(input.device()));
+        auto reduce_buffer2 = torch::zeros({1, 2}, 
+                                          torch::TensorOptions().dtype(torch::kFloat32).device(input.device()));
+        
+        const int reduce_shared_size = block.x * block.y * sizeof(float2);
+        
+        // First reduction pass
+        green_eq_global_reduce_first_kernel<<<grid, block, reduce_shared_size, stream>>>(
+            reinterpret_cast<float4*>(output.data_ptr<float>()), width, height,
+            reinterpret_cast<float2*>(reduce_buffer1.data_ptr<float>()), filters);
+        
+        // Second reduction pass
+        dim3 reduce_block(256);
+        dim3 reduce_grid(1);
+        const int reduce2_shared_size = reduce_block.x * sizeof(float2);
+        
+        green_eq_global_reduce_second_kernel<<<reduce_grid, reduce_block, reduce2_shared_size, stream>>>(
+            reinterpret_cast<float2*>(reduce_buffer1.data_ptr<float>()),
+            reinterpret_cast<float2*>(reduce_buffer2.data_ptr<float>()), num_blocks);
+        
+        // Copy result to host to calculate ratio
+        auto reduce_result = reduce_buffer2.cpu();
+        float sum1 = reduce_result[0][0].item<float>();
+        float sum2 = reduce_result[0][1].item<float>();
+        float gr_ratio = (sum1 > 0.0f && sum2 > 0.0f) ? sum2 / sum1 : 1.0f;
+        
+        // Apply global correction
+        green_eq_global_apply_kernel<<<grid, block, 0, stream>>>(
+            reinterpret_cast<float4*>(output.data_ptr<float>()),
+            reinterpret_cast<float4*>(temp_buffer.data_ptr<float>()),
+            width, height, filters, gr_ratio);
+        
+        output = temp_buffer.clone();
+    }
+    
+    // Green equilibration - local
+    if(green_eq_local) {
+        const int green_eq_shared_size = (block.x + 4) * (block.y + 4) * sizeof(float);
+        
+        green_eq_local_kernel<<<grid, block, green_eq_shared_size, stream>>>(
+            reinterpret_cast<float4*>(output.data_ptr<float>()),
+            reinterpret_cast<float4*>(temp_buffer.data_ptr<float>()),
+            width, height, filters, green_eq_threshold);
+        
+        output = temp_buffer.clone();
+    }
+    
+    // Synchronize to ensure completion
+    cudaStreamSynchronize(stream);
+    
+    return output;
+}
