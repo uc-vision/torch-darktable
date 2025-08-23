@@ -5,51 +5,23 @@
  */
 
 #include <cuda_runtime.h>
-#include <device_launch_parameters.h>
 #include <torch/types.h>
 #include <ATen/ATen.h>
 #include <c10/cuda/CUDAStream.h>
 #include <cstdint>
+#include "device_math.h"
 
-// FC macro for Bayer pattern (from darktable)
-#define FC(row, col, filters) ((filters >> ((((row) << 1 & 14) + ((col) & 1)) << 1)) & 3)
+#include "demosaic.h"
 
-// Forward declaration of shared function from ppg_kernels.cu
-__global__ void border_interpolate_kernel(float* input, float4* output, int width, int height, uint32_t filters, int border);
-
-// Helper functions
-__device__ __forceinline__ float fsquare(float x) {
-    return x * x;
-}
-
-__device__ __forceinline__ float clipf(float x) {
-    return fmaxf(fminf(x, 1.0f), 0.0f);
-}
-
-__device__ __forceinline__ float dt_fast_expf(float x) {
-    return expf(x);
-}
-
-__device__ __forceinline__ float dt_fast_hypot(float x, float y) {
-    return hypotf(x, y);
-}
-
-__device__ __forceinline__ float dtcl_sqrt(float x) {
-    return sqrtf(x);
-}
-
-// Mix function equivalent
-__device__ __forceinline__ float mix(float a, float b, float t) {
-    return (1.0f - t) * a + t * b;
-}
 
 static __device__ __forceinline__ float calcBlendFactor(float val, float threshold)
 {
     // sigmoid function
     // result is in ]0;1] range
     // inflexion point is at (x, y) (threshold, 0.5)
-    return 1.0f / (1.0f + dt_fast_expf(16.0f - (16.0f / threshold) * val));
+    return 1.0f / (1.0f + expf(16.0f - (16.0f / threshold) * val));
 }
+
 
 // Populate cfa and rgb data by normalized input
 __global__ void rcd_populate_kernel(float* input, float* cfa, float* rgb0, float* rgb1, float* rgb2, 
@@ -60,7 +32,7 @@ __global__ void rcd_populate_kernel(float* input, float* cfa, float* rgb0, float
     if(col >= width || row >= height) return;
     
     const float val = scale * fmaxf(0.0f, input[row * width + col]);
-    const int color = FC(row, col, filters);
+    const int color = fc(row, col, filters);
 
     float* rgbcol = rgb0;
     if(color == 1) rgbcol = rgb1;
@@ -119,7 +91,7 @@ __global__ void rcd_step_1_2_kernel(float* VH_dir, float* v_diff, float* h_diff,
 __global__ void rcd_step_2_1_kernel(float* lpf, float* cfa, int width, int height, uint32_t filters)
 {
     const int row = 2 + blockIdx.y * blockDim.y + threadIdx.y;
-    const int col = 2 + (FC(row, 0, filters) & 1) + 2 * (blockIdx.x * blockDim.x + threadIdx.x);
+    const int col = 2 + (fc(row, 0, filters) & 1) + 2 * (blockIdx.x * blockDim.x + threadIdx.x);
     if((col > width - 2) || (row > height - 2)) return;
     
     const int idx = row * width + col;
@@ -134,7 +106,7 @@ __global__ void rcd_step_3_1_kernel(float* lpf, float* cfa, float* rgb1, float* 
                                    int width, int height, uint32_t filters)
 {
     const int row = 4 + blockIdx.y * blockDim.y + threadIdx.y;
-    const int col = 4 + (FC(row, 0, filters) & 1) + 2 * (blockIdx.x * blockDim.x + threadIdx.x);
+    const int col = 4 + (fc(row, 0, filters) & 1) + 2 * (blockIdx.x * blockDim.x + threadIdx.x);
     if((col > width - 5) || (row > height - 5)) return;
     
     const int idx = row * width + col;
@@ -193,7 +165,7 @@ __global__ void rcd_step_4_2_kernel(float* PQ_dir, float* p_diff, float* q_diff,
                                    int width, int height, uint32_t filters)
 {
     const int row = 2 + blockIdx.y * blockDim.y + threadIdx.y;
-    const int col = 2 + (FC(row, 0, filters) & 1) + 2 * (blockIdx.x * blockDim.x + threadIdx.x);
+    const int col = 2 + (fc(row, 0, filters) & 1) + 2 * (blockIdx.x * blockDim.x + threadIdx.x);
     if((col > width - 3) || (row > height - 3)) return;
     
     const int idx = row * width + col;
@@ -212,10 +184,10 @@ __global__ void rcd_step_5_1_kernel(float* PQ_dir, float* rgb0, float* rgb1, flo
                                    int width, int height, uint32_t filters)
 {
     const int row = 4 + blockIdx.y * blockDim.y + threadIdx.y;
-    const int col = 4 + (FC(row, 0, filters) & 1) + 2 * (blockIdx.x * blockDim.x + threadIdx.x);
+    const int col = 4 + (fc(row, 0, filters) & 1) + 2 * (blockIdx.x * blockDim.x + threadIdx.x);
     if((col > width - 4) || (row > height - 4)) return;
 
-    const int color = 2 - FC(row, col, filters);
+    const int color = 2 - fc(row, col, filters);
 
     float* rgbc = rgb0;
     if(color == 1) rgbc = rgb1;
@@ -254,7 +226,7 @@ __global__ void rcd_step_5_2_kernel(float* VH_dir, float* rgb0, float* rgb1, flo
                                    int width, int height, uint32_t filters)
 {
     const int row = 4 + blockIdx.y * blockDim.y + threadIdx.y;
-    const int col = 4 + (FC(row, 1, filters) & 1) + 2 * (blockIdx.x * blockDim.x + threadIdx.x);
+    const int col = 4 + (fc(row, 1, filters) & 1) + 2 * (blockIdx.x * blockDim.x + threadIdx.x);
     if((col > width - 4) || (row > height - 4)) return;
 
     const int idx = row * width + col;
@@ -278,6 +250,7 @@ __global__ void rcd_step_5_2_kernel(float* VH_dir, float* rgb0, float* rgb1, flo
     const float rgb1m1 = rgb1[idx - 1];
     const float rgb1p1 = rgb1[idx + 1];
 
+    #pragma unroll
     for(int c = 0; c <= 2; c += 2)
     {
         float* rgbc = (c == 0) ? rgb0 : rgb2;
@@ -335,6 +308,7 @@ __global__ void rcd_border_green_kernel(float* input, float4* output, int width,
     const int yul = ygid * ylsz - 3;
 
     // populate local memory buffer
+    #pragma unroll
     for(int n = 0; n <= maxbuf/lsz; n++)
     {
         const int bufidx = n * lsz + l;
@@ -355,7 +329,7 @@ __global__ void rcd_border_green_kernel(float* input, float4* output, int width,
     // process all non-green pixels
     const int row = y;
     const int col = x;
-    const int c = FC(row, col, filters);
+    const int c = fc(row, col, filters);
     float4 color = make_float4(0.0f, 0.0f, 0.0f, 1.0f); // output color
 
     const float pc = centered_buffer[0];
@@ -437,6 +411,7 @@ __global__ void rcd_border_redblue_kernel(float4* input, float4* output, int wid
     const int yul = ygid * ylsz - 1;
 
     // populate local memory buffer
+    #pragma unroll
     for(int n = 0; n <= maxbuf/lsz; n++)
     {
         const int bufidx = n * lsz + l;
@@ -460,7 +435,7 @@ __global__ void rcd_border_redblue_kernel(float4* input, float4* output, int wid
 
     const int row = y;
     const int col = x;
-    const int c = FC(row, col, filters);
+    const int c = fc(row, col, filters);
     float4 color = centered_buffer[0];
     if(row > 0 && col > 0 && col < width - 1 && row < height - 1)
     {
@@ -471,7 +446,7 @@ __global__ void rcd_border_redblue_kernel(float4* input, float4* output, int wid
             const float4 nb = centered_buffer[ stride];
             const float4 nl = centered_buffer[-1];
             const float4 nr = centered_buffer[ 1];
-            if(FC(row, col+1, filters) == 0) // red nb in same row
+            if(fc(row, col+1, filters) == 0) // red nb in same row
             {
                 color.z = (nt.z + nb.z + 2.0f*color.y - nt.y - nb.y)*0.5f;
                 color.x = (nl.x + nr.x + 2.0f*color.y - nl.y - nr.y)*0.5f;
@@ -566,7 +541,7 @@ __global__ void calc_scharr_mask_kernel(float* input, float* output, int width, 
                   + 162.0f / 255.0f * (input[idx-1] - input[idx+1]);
     const float gy = 47.0f / 255.0f * (input[idx-width-1] - input[idx+width-1] + input[idx-width+1] - input[idx+width+1])
                   + 162.0f / 255.0f * (input[idx-width] - input[idx+width]);
-    const float gradient_magnitude = dt_fast_hypot(gx, gy);
+    const float gradient_magnitude = hypotf(gx, gy);
     output[oidx] = clipf(gradient_magnitude / 16.0f);
 }
 
@@ -583,116 +558,124 @@ __global__ void calc_detail_blend_kernel(float* input, float* output, int width,
     output[idx] = detail ? blend : 1.0f - blend;
 }
 
-// Complete RCD demosaic function implementation - following darktable flow
-torch::Tensor rcd_demosaic_cuda(torch::Tensor input, uint32_t filters, float input_scale, float output_scale) {
-    // Input validation
-    TORCH_CHECK(input.device().is_cuda(), "Input tensor must be on CUDA device");
-    TORCH_CHECK(input.dtype() == torch::kFloat32, "Input tensor must be float32");
-    TORCH_CHECK(input.dim() == 3, "Input tensor must be 3D (H, W, 1)");
-    TORCH_CHECK(input.size(2) == 1, "Input must have single channel (raw Bayer)");
-    
-    // Ensure input is contiguous
-    input = input.contiguous();
-    
-    const int height = input.size(0);
-    const int width = input.size(1);
-    const int RCD_MARGIN = 7;
-    
-    // Create output tensor (H, W, 4) for RGBA
-    auto output = torch::zeros({height, width, 4}, 
-                              torch::TensorOptions().dtype(torch::kFloat32).device(input.device()));
-    
-    // Create all temporary buffers needed for RCD algorithm
-    const auto buffer_opts = torch::TensorOptions().dtype(torch::kFloat32).device(input.device());
-    auto dev_tmp = torch::zeros({height, width, 4}, buffer_opts);
-    auto cfa = torch::zeros({height, width}, buffer_opts);
-    auto rgb0 = torch::zeros({height, width}, buffer_opts);
-    auto rgb1 = torch::zeros({height, width}, buffer_opts);
-    auto rgb2 = torch::zeros({height, width}, buffer_opts);
-    auto VH_dir = torch::zeros({height, width}, buffer_opts);
-    auto PQ_dir = torch::zeros({height, width}, buffer_opts);
-    auto VP_diff = torch::zeros({height, width}, buffer_opts);
-    auto HQ_diff = torch::zeros({height, width}, buffer_opts);
-    
-    // Get CUDA stream
-    auto stream = at::cuda::getCurrentCUDAStream().stream();
-    
-    // Setup grid and block dimensions
-    dim3 block(16, 16);
-    dim3 grid((width + block.x - 1) / block.x, (height + block.y - 1) / block.y);
-    dim3 grid_half((width/2 + block.x - 1) / block.x, (height + block.y - 1) / block.y);
-    
-    // Step 1: Border interpolation - initial RGB estimation for borders
-    border_interpolate_kernel<<<grid, block, 0, stream>>>(
-        input.data_ptr<float>(), reinterpret_cast<float4*>(dev_tmp.data_ptr<float>()), 
-        width, height, filters, 3);
-    
-    // Step 2: RCD border green interpolation with shared memory
-    const int green_stride = block.x + 2*3;
-    const int green_shared_size = green_stride * (block.y + 2*3) * sizeof(float);
-    
-    rcd_border_green_kernel<<<grid, block, green_shared_size, stream>>>(
-        input.data_ptr<float>(), reinterpret_cast<float4*>(dev_tmp.data_ptr<float>()), 
-        width, height, filters, 32);
-    
-    // Step 3: RCD border red/blue interpolation  
-    const int redblue_stride = block.x + 2;
-    const int redblue_shared_size = redblue_stride * (block.y + 2) * sizeof(float4);
-    
-    rcd_border_redblue_kernel<<<grid, block, redblue_shared_size, stream>>>(
-        reinterpret_cast<float4*>(dev_tmp.data_ptr<float>()), 
-        reinterpret_cast<float4*>(output.data_ptr<float>()), 
-        width, height, filters, 16);
-    
-    // Step 4: Populate CFA and RGB data with scaling
-    rcd_populate_kernel<<<grid, block, 0, stream>>>(
-        input.data_ptr<float>(), cfa.data_ptr<float>(), rgb0.data_ptr<float>(), 
-        rgb1.data_ptr<float>(), rgb2.data_ptr<float>(), width, height, filters, input_scale);
-    
-    // Step 5: RCD Algorithm Step 1.1 - Calculate squared vertical and horizontal high pass filters
-    rcd_step_1_1_kernel<<<grid, block, 0, stream>>>(
-        cfa.data_ptr<float>(), VP_diff.data_ptr<float>(), HQ_diff.data_ptr<float>(), width, height);
-    
-    // Step 6: RCD Algorithm Step 1.2 - Calculate vertical and horizontal local discrimination  
-    rcd_step_1_2_kernel<<<grid, block, 0, stream>>>(
-        VH_dir.data_ptr<float>(), VP_diff.data_ptr<float>(), HQ_diff.data_ptr<float>(), width, height);
-    
-    // Step 7: RCD Algorithm Step 2.1 - Low pass filter (note: width/2 grid)
-    rcd_step_2_1_kernel<<<grid_half, block, 0, stream>>>(
-        PQ_dir.data_ptr<float>(), cfa.data_ptr<float>(), width, height, filters);
-    
-    // Step 8: RCD Algorithm Step 3.1 - Populate green channel at blue and red CFA positions
-    rcd_step_3_1_kernel<<<grid_half, block, 0, stream>>>(
-        PQ_dir.data_ptr<float>(), cfa.data_ptr<float>(), rgb1.data_ptr<float>(), 
-        VH_dir.data_ptr<float>(), width, height, filters);
-    
-    // Step 9: RCD Algorithm Step 4.1 - Calculate squared P/Q diagonals high pass filter
-    rcd_step_4_1_kernel<<<grid_half, block, 0, stream>>>(
-        cfa.data_ptr<float>(), VP_diff.data_ptr<float>(), HQ_diff.data_ptr<float>(), 
-        width, height, filters);
-    
-    // Step 10: RCD Algorithm Step 4.2 - Calculate P/Q diagonal local discrimination
-    rcd_step_4_2_kernel<<<grid_half, block, 0, stream>>>(
-        PQ_dir.data_ptr<float>(), VP_diff.data_ptr<float>(), HQ_diff.data_ptr<float>(), 
-        width, height, filters);
-    
-    // Step 11: RCD Algorithm Step 5.1 - Populate red and blue channels at blue and red CFA positions
-    rcd_step_5_1_kernel<<<grid_half, block, 0, stream>>>(
-        PQ_dir.data_ptr<float>(), rgb0.data_ptr<float>(), rgb1.data_ptr<float>(), 
-        rgb2.data_ptr<float>(), width, height, filters);
-    
-    // Step 12: RCD Algorithm Step 5.2 - Populate red and blue channels at green CFA positions  
-    rcd_step_5_2_kernel<<<grid_half, block, 0, stream>>>(
-        VH_dir.data_ptr<float>(), rgb0.data_ptr<float>(), rgb1.data_ptr<float>(), 
-        rgb2.data_ptr<float>(), width, height, filters);
-    
-    // Step 13: Write final output with scaling (only inner region, preserving borders)
-    rcd_write_output_kernel<<<grid, block, 0, stream>>>(
-        reinterpret_cast<float4*>(output.data_ptr<float>()), rgb0.data_ptr<float>(), 
-        rgb1.data_ptr<float>(), rgb2.data_ptr<float>(), width, height, output_scale, RCD_MARGIN);
-    
-    // Synchronize to ensure completion
-    cudaStreamSynchronize(stream);
-    
-    return output;
+
+
+struct RCDImpl : public RCD {
+    int width_;
+    int height_;
+    float input_scale_;
+    float output_scale_;
+    uint32_t filters_;
+
+    torch::Device device_;
+
+    torch::Tensor output_buffer_;
+    torch::Tensor cfa_;
+    torch::Tensor rgb0_;
+    torch::Tensor rgb1_;
+    torch::Tensor rgb2_;
+    torch::Tensor VH_dir_;
+    torch::Tensor VP_diff_;
+    torch::Tensor HQ_diff_;
+    torch::Tensor lpf_PQ_;
+
+    RCDImpl(torch::Device device, int width, int height, uint32_t filters, float input_scale, float output_scale)
+        : device_(device), width_(width), height_(height), filters_(filters),
+          input_scale_(input_scale), output_scale_(output_scale) {
+
+        const auto buffer_opts = torch::TensorOptions().dtype(torch::kFloat32).device(device);
+        output_buffer_ = torch::zeros({height, width, 4}, buffer_opts);
+        cfa_ = torch::zeros({height, width}, buffer_opts);
+        rgb0_ = torch::zeros({height, width}, buffer_opts);
+        rgb1_ = torch::zeros({height, width}, buffer_opts);
+        rgb2_ = torch::zeros({height, width}, buffer_opts);
+        VH_dir_ = torch::zeros({height, width}, buffer_opts);
+        VP_diff_ = torch::zeros({height, width}, buffer_opts);
+        HQ_diff_ = torch::zeros({height, width}, buffer_opts);
+        lpf_PQ_ = torch::zeros({height, width}, buffer_opts);
+    }
+
+
+
+    ~RCDImpl() override = default;
+
+    torch::Tensor process(const torch::Tensor& input) override {
+        TORCH_CHECK(input.device().is_cuda(), "Input tensor must be on CUDA device");
+        TORCH_CHECK(input.dtype() == torch::kFloat32, "Input tensor must be float32");
+        TORCH_CHECK(input.dim() == 3, "Input tensor must be 3D (H, W, 1)");
+        TORCH_CHECK(input.size(2) == 1, "Input must have single channel (raw Bayer)");
+        TORCH_CHECK(input.size(0) == height_ && input.size(1) == width_, "Input dimensions must match workspace size");
+
+        auto contiguous_input = input.contiguous();
+        const int RCD_MARGIN = 7;
+        auto stream = at::cuda::getCurrentCUDAStream().stream();
+
+        dim3 block(16, 16);
+        dim3 grid((width_ + block.x - 1) / block.x, (height_ + block.y - 1) / block.y);
+        dim3 grid_half((width_/2 + block.x - 1) / block.x, (height_ + block.y - 1) / block.y);
+
+        border_interpolate_kernel<<<grid, block, 0, stream>>>(
+            contiguous_input.data_ptr<float>(), reinterpret_cast<float4*>(output_buffer_.data_ptr<float>()),
+            width_, height_, filters_, 3);
+
+        const int green_stride = block.x + 2*3;
+        const int green_shared_size = green_stride * (block.y + 2*3) * sizeof(float);
+        rcd_border_green_kernel<<<grid, block, green_shared_size, stream>>>(
+            contiguous_input.data_ptr<float>(), reinterpret_cast<float4*>(output_buffer_.data_ptr<float>()),
+            width_, height_, filters_, 32);
+
+        const int redblue_stride = block.x + 2;
+        const int redblue_shared_size = redblue_stride * (block.y + 2) * sizeof(float4);
+        rcd_border_redblue_kernel<<<grid, block, redblue_shared_size, stream>>>(
+            reinterpret_cast<float4*>(output_buffer_.data_ptr<float>()),
+            reinterpret_cast<float4*>(output_buffer_.data_ptr<float>()),
+            width_, height_, filters_, 16);
+
+        rcd_populate_kernel<<<grid, block, 0, stream>>>(
+            contiguous_input.data_ptr<float>(), cfa_.data_ptr<float>(), rgb0_.data_ptr<float>(),
+            rgb1_.data_ptr<float>(), rgb2_.data_ptr<float>(), width_, height_, filters_, input_scale_);
+
+        rcd_step_1_1_kernel<<<grid, block, 0, stream>>>(
+            cfa_.data_ptr<float>(), VP_diff_.data_ptr<float>(), HQ_diff_.data_ptr<float>(), width_, height_);
+
+        rcd_step_1_2_kernel<<<grid, block, 0, stream>>>(
+            VH_dir_.data_ptr<float>(), VP_diff_.data_ptr<float>(), HQ_diff_.data_ptr<float>(), width_, height_);
+
+        rcd_step_2_1_kernel<<<grid_half, block, 0, stream>>>(
+            lpf_PQ_.data_ptr<float>(), cfa_.data_ptr<float>(), width_, height_, filters_);
+
+        rcd_step_3_1_kernel<<<grid_half, block, 0, stream>>>(
+            lpf_PQ_.data_ptr<float>(), cfa_.data_ptr<float>(), rgb1_.data_ptr<float>(),
+            VH_dir_.data_ptr<float>(), width_, height_, filters_);
+
+        rcd_step_4_1_kernel<<<grid_half, block, 0, stream>>>(
+            cfa_.data_ptr<float>(), VP_diff_.data_ptr<float>(), HQ_diff_.data_ptr<float>(),
+            width_, height_, filters_);
+
+        rcd_step_4_2_kernel<<<grid_half, block, 0, stream>>>(
+            lpf_PQ_.data_ptr<float>(), VP_diff_.data_ptr<float>(), HQ_diff_.data_ptr<float>(),
+            width_, height_, filters_);
+
+        rcd_step_5_1_kernel<<<grid_half, block, 0, stream>>>(
+            lpf_PQ_.data_ptr<float>(), rgb0_.data_ptr<float>(), rgb1_.data_ptr<float>(),
+            rgb2_.data_ptr<float>(), width_, height_, filters_);
+
+        rcd_step_5_2_kernel<<<grid_half, block, 0, stream>>>(
+            VH_dir_.data_ptr<float>(), rgb0_.data_ptr<float>(), rgb1_.data_ptr<float>(),
+            rgb2_.data_ptr<float>(), width_, height_, filters_);
+
+        rcd_write_output_kernel<<<grid, block, 0, stream>>>(
+            reinterpret_cast<float4*>(output_buffer_.data_ptr<float>()), rgb0_.data_ptr<float>(),
+            rgb1_.data_ptr<float>(), rgb2_.data_ptr<float>(), width_, height_, output_scale_, RCD_MARGIN);
+
+        return output_buffer_;
+    }
+
+    int get_width() const override { return width_; }
+    int get_height() const override { return height_; }
+};
+
+std::shared_ptr<RCD> create_rcd(torch::Device device, int width, int height, uint32_t filters, float input_scale, float output_scale) {
+    return std::make_shared<RCDImpl>(device, width, height, filters, input_scale, output_scale);
 }
+

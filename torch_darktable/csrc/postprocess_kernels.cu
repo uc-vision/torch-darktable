@@ -5,23 +5,26 @@
  */
 
 #include <cuda_runtime.h>
-#include <device_launch_parameters.h>
 #include <torch/types.h>
 #include <ATen/ATen.h>
 #include <c10/cuda/CUDAStream.h>
 #include <cstdint>
+#include <algorithm>
 
-// FC macro for Bayer pattern (from darktable)
-#define FC(row, col, filters) ((filters >> ((((row) << 1 & 14) + ((col) & 1)) << 1)) & 3)
+#include "demosaic.h"
 
-// Compare and swap macro for sorting network
-#define cas(a, b) \
-    do { \
-        float x = a; \
-        int c = a > b; \
-        a = c ? b : a; \
-        b = c ? x : b; \
-    } while (0)
+// FC inline function for Bayer pattern (from darktable)
+__device__ __forceinline__ int FC(int row, int col, uint32_t filters) {
+    return (filters >> ((((row) << 1 & 14) + ((col) & 1)) << 1)) & 3;
+}
+
+// Compare and swap inline function for sorting network
+__device__ __forceinline__ void cas(float& a, float& b) {
+    float x = a;
+    int c = a > b;
+    a = c ? b : a;
+    b = c ? x : b;
+}
 
 /**
  * Color smoothing using 3x3 median filter
@@ -49,6 +52,7 @@ __global__ void color_smoothing_kernel(
 
     const int nchunks = buffsz % gsz == 0 ? buffsz/gsz - 1 : buffsz/gsz;
 
+    #pragma unroll
     for(int n = 0; n <= nchunks; n++)
     {
         const int bufidx = (n * gsz) + lidx;
@@ -181,6 +185,7 @@ __global__ void green_eq_local_kernel(
     const int yul = ygid * ylsz - 2;
 
     // populate local memory buffer
+    #pragma unroll
     for(int n = 0; n <= maxbuf/lsz; n++)
     {
         const int bufidx = n * lsz + l;
@@ -270,6 +275,7 @@ __global__ void green_eq_global_reduce_first_kernel(
 
     const int lsz = xlsz * ylsz;
 
+    #pragma unroll
     for(int offset = lsz / 2; offset > 0; offset = offset / 2)
     {
         if(l < offset)
@@ -289,47 +295,7 @@ __global__ void green_eq_global_reduce_first_kernel(
         accu[m] = reduce_buffer[0];
 }
 
-/**
- * Green equilibration - global averaging second pass
- * Final reduction across all work groups
- */
-__global__ void green_eq_global_reduce_second_kernel(
-    const float2* input,
-    float2* result,
-    int length
-) {
-    extern __shared__ float2 reduce2_buffer[];
-    
-    int x = blockIdx.x * blockDim.x + threadIdx.x;
-    float2 sum = make_float2(0.0f, 0.0f);
 
-    while(x < length)
-    {
-        sum = make_float2(sum.x + input[x].x, sum.y + input[x].y);
-        x += blockDim.x * gridDim.x;
-    }
-
-    int lid = threadIdx.x;
-    reduce2_buffer[lid] = sum;
-
-    __syncthreads();
-
-    for(int offset = blockDim.x / 2; offset > 0; offset = offset / 2)
-    {
-        if(lid < offset)
-        {
-            reduce2_buffer[lid] = make_float2(reduce2_buffer[lid].x + reduce2_buffer[lid + offset].x,
-                                             reduce2_buffer[lid].y + reduce2_buffer[lid + offset].y);
-        }
-        __syncthreads();
-    }
-
-    if(lid == 0)
-    {
-        const int gid = blockIdx.x;
-        result[gid] = reduce2_buffer[0];
-    }
-}
 
 /**
  * Green equilibration - global averaging apply correction
@@ -354,118 +320,153 @@ __global__ void green_eq_global_apply_kernel(
     const int isgreen1 = (c == 1 && !(y & 1));
 
     pixel.y *= (isgreen1 ? gr_ratio : 1.0f);
-
     output[y * width + x] = make_float4(fmaxf(pixel.x, 0.0f), fmaxf(pixel.y, 0.0f), 
                                        fmaxf(pixel.z, 0.0f), pixel.w);
 }
 
-#undef cas
 
-// Post-processing orchestration function
-torch::Tensor postprocess_demosaic_cuda(torch::Tensor input, uint32_t filters, 
-                                       int color_smoothing_passes, bool green_eq_local, 
-                                       bool green_eq_global, float green_eq_threshold) {
-    // Input validation
-    TORCH_CHECK(input.device().is_cuda(), "Input tensor must be on CUDA device");
-    TORCH_CHECK(input.dtype() == torch::kFloat32, "Input tensor must be float32");
-    TORCH_CHECK(input.dim() == 3, "Input tensor must be 3D (H, W, 4)");
-    TORCH_CHECK(input.size(2) == 4, "Input must have 4 channels (RGBA)");
+
+
+// PostProcess Implementation
+struct PostProcessImpl : public PostProcess {
+    uint32_t filters_;
+    int color_smoothing_passes_;
+    bool green_eq_local_;
+    bool green_eq_global_;
+    float green_eq_threshold_;
+    int width_;
+    int height_;
+
+    torch::Device device_;
+
+    dim3 block_;
+    dim3 grid_;
+
+    // Working buffers for ping-pong operations
+    torch::Tensor buffer1_;
+    torch::Tensor buffer2_;
+    torch::Tensor reduce_buffer_;
+
     
-    // Ensure input is contiguous
-    input = input.contiguous();
-    
-    const int height = input.size(0);
-    const int width = input.size(1);
-    
-    // Create working buffers
-    auto output = input.clone();
-    auto temp_buffer = torch::zeros_like(input);
-    
-    // Get CUDA stream
-    auto stream = at::cuda::getCurrentCUDAStream().stream();
-    
-    // Setup grid and block dimensions
-    dim3 block(16, 16);
-    dim3 grid((width + block.x - 1) / block.x, (height + block.y - 1) / block.y);
-    
-    // Color smoothing (multiple passes using ping-pong buffers)
-    if(color_smoothing_passes > 0) {
-        const int smoothing_shared_size = (block.x + 2) * (block.y + 2) * sizeof(float4);
-        
-        float4* buffer1 = reinterpret_cast<float4*>(output.data_ptr<float>());
-        float4* buffer2 = reinterpret_cast<float4*>(temp_buffer.data_ptr<float>());
-        
-        for(int pass = 0; pass < color_smoothing_passes; pass++) {
-            color_smoothing_kernel<<<grid, block, smoothing_shared_size, stream>>>(
-                buffer1, buffer2, width, height);
-            
-            // Swap buffers
-            float4* temp = buffer1;
-            buffer1 = buffer2;
-            buffer2 = temp;
+
+    PostProcessImpl(torch::Device device, int width, int height, uint32_t filters,
+      int color_smoothing_passes,
+      bool green_eq_local,
+      bool green_eq_global,
+      float green_eq_threshold)
+        : device_(device), width_(width), height_(height), filters_(filters),
+          color_smoothing_passes_(color_smoothing_passes),
+          green_eq_local_(green_eq_local), green_eq_global_(green_eq_global),
+          green_eq_threshold_(green_eq_threshold) {
+
+        constexpr int block_size = 16;
+
+        block_ = dim3(block_size, block_size);
+        grid_ = dim3((width + block_size - 1) / block_size, (height + block_size - 1) / block_size);
+
+        // Initialize buffers with correct size from the start
+        const auto buffer_opts = torch::TensorOptions().dtype(torch::kFloat32).device(device);
+
+        buffer1_ = torch::empty({height, width, 4}, buffer_opts);
+        buffer2_ = torch::empty({height, width, 4}, buffer_opts);
+        reduce_buffer_ = torch::empty({grid_.x * grid_.y, 2}, buffer_opts);
+    }
+
+    ~PostProcessImpl() override = default;
+
+
+    torch::Tensor process(const torch::Tensor& input) override {
+        // Input validation
+        TORCH_CHECK(input.device().is_cuda(), "Input tensor must be on CUDA device");
+        TORCH_CHECK(input.dtype() == torch::kFloat32, "Input tensor must be float32");
+        TORCH_CHECK(input.dim() == 3, "Input tensor must be 3D (H, W, 4)");
+        TORCH_CHECK(input.size(2) == 4, "Input must have 4 channels (RGBA)");
+
+        // Check dimensions match expected size
+        TORCH_CHECK(input.size(0) == height_ && input.size(1) == width_, "Input size ", input.size(0), "x", input.size(1), " does not match expected ", height_, "x", width_);
+
+        // Ensure input is contiguous and copy to buffer1
+        auto contiguous_input = input.contiguous();
+        buffer1_.copy_(contiguous_input);
+
+        // Initialize local buffer pointers
+        float4 *buffers[2] = {
+            reinterpret_cast<float4*>(buffer1_.data_ptr<float>()),
+            reinterpret_cast<float4*>(buffer2_.data_ptr<float>())
+        };
+
+        bool current = false;
+
+        // Get CUDA stream
+        auto stream = at::cuda::getCurrentCUDAStream().stream();
+
+        // Use pre-calculated CUDA dimensions
+
+        // Color smoothing (multiple passes using ping-pong buffers)
+        const int smoothing_shared_size = (block_.x + 2) * (block_.y + 2) * sizeof(float4);
+
+        for(int pass = 0; pass < color_smoothing_passes_; pass++) {
+            color_smoothing_kernel<<<grid_, block_, smoothing_shared_size, stream>>>(
+                buffers[current], buffers[!current],
+                width_, height_);
+
+            // Swap buffer pointers (no data copy)
+            current = not current;
         }
-        
-        // Ensure final result is in output buffer
-        if(color_smoothing_passes % 2 == 1) {
-            cudaMemcpyAsync(output.data_ptr<float>(), temp_buffer.data_ptr<float>(), 
-                           height * width * 4 * sizeof(float), cudaMemcpyDeviceToDevice, stream);
+
+        // Green equilibration - global
+        if(green_eq_global_) {
+            const int reduce_shared_size = block_.x * block_.y * sizeof(float2);
+
+            // First reduction pass
+            float2* reduce_ptr = reinterpret_cast<float2*>(reduce_buffer_.data_ptr<float>());
+
+            green_eq_global_reduce_first_kernel<<<grid_, block_, reduce_shared_size, stream>>>(
+                buffers[current], width_, height_,
+                reduce_ptr, filters_);
+
+            // Sum reduction using PyTorch
+            auto final_result = reduce_buffer_.sum(0);
+
+            float sum1 = final_result[0].item<float>();
+            float sum2 = final_result[1].item<float>();
+            float gr_ratio = (sum1 > 0.0f && sum2 > 0.0f) ? sum2 / sum1 : 1.0f;
+
+            // Apply global correction
+            green_eq_global_apply_kernel<<<grid_, block_, 0, stream>>>(
+                buffers[current], buffers[!current],
+                width_, height_, filters_, gr_ratio);
+
+            // Swap buffer pointers (no data copy)
+            current = not current;
         }
+
+        // Green equilibration - local
+        if(green_eq_local_) {
+            const int green_eq_shared_size = (block_.x + 4) * (block_.y + 4) * sizeof(float);
+
+            green_eq_local_kernel<<<grid_, block_, green_eq_shared_size, stream>>>(
+                buffers[current], buffers[!current],
+                width_, height_, filters_, green_eq_threshold_);
+
+            // Swap buffer pointers (no data copy)
+            current = not current;
+        }
+
+        return (current ? buffer1_ : buffer2_).clone();
     }
-    
-    // Green equilibration - global
-    if(green_eq_global) {
-        // Allocate reduction buffers
-        const int num_blocks = grid.x * grid.y;
-        auto reduce_buffer1 = torch::zeros({num_blocks, 2}, 
-                                          torch::TensorOptions().dtype(torch::kFloat32).device(input.device()));
-        auto reduce_buffer2 = torch::zeros({1, 2}, 
-                                          torch::TensorOptions().dtype(torch::kFloat32).device(input.device()));
-        
-        const int reduce_shared_size = block.x * block.y * sizeof(float2);
-        
-        // First reduction pass
-        green_eq_global_reduce_first_kernel<<<grid, block, reduce_shared_size, stream>>>(
-            reinterpret_cast<float4*>(output.data_ptr<float>()), width, height,
-            reinterpret_cast<float2*>(reduce_buffer1.data_ptr<float>()), filters);
-        
-        // Second reduction pass
-        dim3 reduce_block(256);
-        dim3 reduce_grid(1);
-        const int reduce2_shared_size = reduce_block.x * sizeof(float2);
-        
-        green_eq_global_reduce_second_kernel<<<reduce_grid, reduce_block, reduce2_shared_size, stream>>>(
-            reinterpret_cast<float2*>(reduce_buffer1.data_ptr<float>()),
-            reinterpret_cast<float2*>(reduce_buffer2.data_ptr<float>()), num_blocks);
-        
-        // Copy result to host to calculate ratio
-        auto reduce_result = reduce_buffer2.cpu();
-        float sum1 = reduce_result[0][0].item<float>();
-        float sum2 = reduce_result[0][1].item<float>();
-        float gr_ratio = (sum1 > 0.0f && sum2 > 0.0f) ? sum2 / sum1 : 1.0f;
-        
-        // Apply global correction
-        green_eq_global_apply_kernel<<<grid, block, 0, stream>>>(
-            reinterpret_cast<float4*>(output.data_ptr<float>()),
-            reinterpret_cast<float4*>(temp_buffer.data_ptr<float>()),
-            width, height, filters, gr_ratio);
-        
-        output = temp_buffer.clone();
-    }
-    
-    // Green equilibration - local
-    if(green_eq_local) {
-        const int green_eq_shared_size = (block.x + 4) * (block.y + 4) * sizeof(float);
-        
-        green_eq_local_kernel<<<grid, block, green_eq_shared_size, stream>>>(
-            reinterpret_cast<float4*>(output.data_ptr<float>()),
-            reinterpret_cast<float4*>(temp_buffer.data_ptr<float>()),
-            width, height, filters, green_eq_threshold);
-        
-        output = temp_buffer.clone();
-    }
-    
-    // Synchronize to ensure completion
-    cudaStreamSynchronize(stream);
-    
-    return output;
+};
+
+std::shared_ptr<PostProcess> create_postprocess(torch::Device device,
+    int width, int height,
+    uint32_t filters,
+    int color_smoothing_passes,
+    bool green_eq_local,
+    bool green_eq_global,
+    float green_eq_threshold) {
+    return std::make_shared<PostProcessImpl>(device, width, height, filters,
+      color_smoothing_passes,
+      green_eq_local,
+      green_eq_global,
+      green_eq_threshold);
 }

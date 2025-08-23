@@ -4,23 +4,25 @@
  */
 
 #include <cuda_runtime.h>
-#include <device_launch_parameters.h>
 #include <torch/types.h>
 #include <ATen/ATen.h>
 #include <c10/cuda/CUDAStream.h>
 #include <cstdint>
 
-// FC macro for Bayer pattern (from darktable)
-#define FC(row, col, filters) ((filters >> ((((row) << 1 & 14) + ((col) & 1)) << 1)) & 3)
+#include "demosaic.h"
 
-__constant__ int glim[5] = { 0, 1, 2, 1, 0 };
 
-#define SWAP(a, b)                \
-  {                               \
-    const float tmp = (b);        \
-    (b) = (a);                    \
-    (a) = tmp;                    \
-  }
+// Inline functions instead of macros for better type safety and debugging
+__device__ __forceinline__ int fc(int row, int col, uint32_t filters) {
+    return (filters >> ((((row) << 1 & 14) + ((col) & 1)) << 1)) & 3;
+}
+
+__device__ __forceinline__ void swap_floats(float& a, float& b) {
+    const float tmp = b;
+    b = a;
+    a = tmp;
+}
+
 
 /**
  * Pre-median filtering kernel - exact translation from darktable OpenCL
@@ -58,6 +60,7 @@ __global__ void pre_median_kernel(
     const int yul = ygid * ylsz - 2;
 
     // populate local memory buffer
+    #pragma unroll
     for(int n = 0; n <= maxbuf/lsz; n++)
     {
         const int bufidx = n * lsz + l;
@@ -74,16 +77,15 @@ __global__ void pre_median_kernel(
 
     if(x >= width || y >= height) return;
 
-    const int *lim = glim;
-
-    const int c = FC(y, x, filters);
-
+    constexpr int lim[5] = { 0, 1, 2, 1, 0 };
+    const int c = fc(y, x, filters);
     float med[9];
-
     int cnt = 0;
 
+    #pragma unroll
     for(int k = 0, i = 0; i < 5; i++)
     {
+        #pragma unroll
         for(int j = -lim[i]; j <= lim[i]; j += 2)
         {
             if(fabsf(centered_median[stride * (i - 2) + j] - centered_median[0]) < threshold)
@@ -96,16 +98,17 @@ __global__ void pre_median_kernel(
         }
     }
 
+    #pragma unroll
     for(int i = 0; i < 8; i++)
+        #pragma unroll
         for(int ii = i + 1; ii < 9; ii++)
-            if(med[i] > med[ii]) SWAP(med[i], med[ii]);
+            if(med[i] > med[ii]) swap_floats(med[i], med[ii]);
 
     float color = (c & 1) ? (cnt == 1 ? med[4] - 64.0f : med[(cnt - 1) / 2]) : centered_median[0];
 
     output[y * width + x] = fmaxf(color, 0.0f);
 }
 
-#undef SWAP
 
 /**
  * fill greens pass of pattern pixel grouping - exact translation from darktable OpenCL
@@ -143,6 +146,7 @@ __global__ void ppg_demosaic_green_kernel(
     const int yul = ygid * ylsz - 3;
 
     // populate local memory buffer
+    #pragma unroll
     for(int n = 0; n <= maxbuf/lsz; n++)
     {
         const int bufidx = n * lsz + l;
@@ -163,7 +167,7 @@ __global__ void ppg_demosaic_green_kernel(
     // process all non-green pixels
     const int row = y;
     const int col = x;
-    const int c = FC(row, col, filters);
+    const int c = fc(row, col, filters);
     float4 color = make_float4(0.0f, 0.0f, 0.0f, 1.0f); // output color
 
     const float pc = centered_green[0];
@@ -253,6 +257,7 @@ __global__ void ppg_demosaic_redblue_kernel(
     const int yul = ygid * ylsz - 1;
 
     // populate local memory buffer
+    #pragma unroll
     for(int n = 0; n <= maxbuf/lsz; n++)
     {
         const int bufidx = n * lsz + l;
@@ -270,7 +275,7 @@ __global__ void ppg_demosaic_redblue_kernel(
     if(x >= width || y >= height) return;
     const int row = y;
     const int col = x;
-    const int c = FC(row, col, filters);
+    const int c = fc(row, col, filters);
     float4 color = centered_redblue[0];
     if(x == 0 || y == 0 || x == (width-1) || y == (height-1))
     {
@@ -285,7 +290,7 @@ __global__ void ppg_demosaic_redblue_kernel(
         const float4 nb = centered_redblue[ stride];
         const float4 nl = centered_redblue[-1];
         const float4 nr = centered_redblue[ 1];
-        if(FC(row, col+1, filters) == 0) // red nb in same row
+        if(fc(row, col+1, filters) == 0) // red nb in same row
         {
             color.z = (nt.z + nb.z + 2.0f*color.y - nt.y - nb.y)*0.5f;
             color.x = (nl.x + nr.x + 2.0f*color.y - nl.y - nr.y)*0.5f;
@@ -352,11 +357,14 @@ __global__ void border_interpolate_kernel(
     float sum[4] = { 0.0f };
     int count[4] = { 0 };
 
-    for (int j=y-avgwindow; j<=y+avgwindow; j++) for (int i=x-avgwindow; i<=x+avgwindow; i++)
+    #pragma unroll
+    for (int j=y-avgwindow; j<=y+avgwindow; j++) 
+        #pragma unroll
+        for (int i=x-avgwindow; i<=x+avgwindow; i++)
     {
         if (j>=0 && i>=0 && j<height && i<width)
         {
-            const int f = FC(j,i,filters);
+            const int f = fc(j,i,filters);
             sum[f] += fmaxf(0.0f, input[j * width + i]);
             count[f]++;
         }
@@ -367,7 +375,7 @@ __global__ void border_interpolate_kernel(
     o.y = count[1]+count[3] > 0 ? (sum[1]+sum[3])/(count[1]+count[3]) : i;
     o.z = count[2] > 0 ? sum[2]/count[2] : i;
 
-    const int f = FC(y,x,filters);
+    const int f = fc(y,x,filters);
 
     if     (f == 0) o.x = i;
     else if(f == 1) o.y = i;
@@ -377,75 +385,85 @@ __global__ void border_interpolate_kernel(
     output[y * width + x] = o;
 }
 
+struct PPGImpl : public PPG {
+    torch::Device device_;
+    int width_;
+    int height_;
+    float median_threshold_;
+    uint32_t filters_;
 
+    torch::Tensor temp_median_;
+    torch::Tensor temp_buffer_;
 
-// Complete demosaic function implementation - exact darktable flow
-torch::Tensor ppg_demosaic_cuda(torch::Tensor input, uint32_t filters, float median_threshold) {
-    // Input validation
-    TORCH_CHECK(input.device().is_cuda(), "Input tensor must be on CUDA device");
-    TORCH_CHECK(input.dtype() == torch::kFloat32, "Input tensor must be float32");
-    TORCH_CHECK(input.dim() == 3, "Input tensor must be 3D (H, W, 1)");
-    TORCH_CHECK(input.size(2) == 1, "Input must have single channel (raw Bayer)");
-    
-    // Ensure input is contiguous
-    input = input.contiguous();
-    
-    const int height = input.size(0);
-    const int width = input.size(1);
-    
-    // Create output tensor (H, W, 4) for RGBA
-    auto output = torch::zeros({height, width, 4}, 
-                              torch::TensorOptions().dtype(torch::kFloat32).device(input.device()));
-    
-    // Create temporary buffer for median filtering
-    auto temp_median = torch::zeros({height, width}, 
-                                   torch::TensorOptions().dtype(torch::kFloat32).device(input.device()));
-    
-    // Get CUDA stream
-    auto stream = at::cuda::getCurrentCUDAStream().stream();
-    
-    // Setup grid and block dimensions - must match darktable's local work group sizing
-    dim3 block(16, 16);  // This needs to match OpenCL local size
-    dim3 grid((width + block.x - 1) / block.x, (height + block.y - 1) / block.y);
-    
-    // Calculate shared memory sizes for each kernel
-    const int median_stride = block.x + 2*2;
-    const int median_shared_size = median_stride * (block.y + 2*2) * sizeof(float);
-    
-    const int green_stride = block.x + 2*3;
-    const int green_shared_size = green_stride * (block.y + 2*3) * sizeof(float);
-    
-    const int redblue_stride = block.x + 2;
-    const int redblue_shared_size = redblue_stride * (block.y + 2) * sizeof(float4);
-    
-    auto* processing_input = input.data_ptr<float>();
-    
-    // Step 1: Border interpolation - demosaic border regions to RGB FIRST
-    border_interpolate_kernel<<<grid, block, 0, stream>>>(
-        input.data_ptr<float>(), reinterpret_cast<float4*>(output.data_ptr<float>()), 
-        width, height, filters, 3);
-    
-    // Step 2: Pre-median filtering (optional) on raw data
-    if (median_threshold > 0.0f) {
-        pre_median_kernel<<<grid, block, median_shared_size, stream>>>(
-            input.data_ptr<float>(), temp_median.data_ptr<float>(), 
-            width, height, filters, median_threshold);
-        processing_input = temp_median.data_ptr<float>();
+    PPGImpl(torch::Device device, int width, int height, uint32_t filters, float median_threshold)
+        : device_(device), width_(width), height_(height), filters_(filters), median_threshold_(median_threshold) {
+
+        const auto buffer_opts = torch::TensorOptions().dtype(torch::kFloat32).device(device);
+        temp_median_ = torch::zeros({height, width}, buffer_opts);
+        temp_buffer_ = torch::zeros({height, width, 4}, buffer_opts);
     }
-    
-    // Step 3: Green channel interpolation - outputs to RGB buffer (overwrites borders)
-    ppg_demosaic_green_kernel<<<grid, block, green_shared_size, stream>>>(
-        processing_input, reinterpret_cast<float4*>(output.data_ptr<float>()), 
-        width, height, filters);
-    
-    // Step 4: Red/Blue interpolation - final step using RGB buffer
-    ppg_demosaic_redblue_kernel<<<grid, block, redblue_shared_size, stream>>>(
-        reinterpret_cast<float4*>(output.data_ptr<float>()), 
-        reinterpret_cast<float4*>(output.data_ptr<float>()), 
-        width, height, filters);
-    
-    // Synchronize to ensure completion
-    cudaStreamSynchronize(stream);
-    
-    return output;
+
+
+
+    ~PPGImpl() override = default;
+
+    torch::Tensor process(const torch::Tensor& input) override {
+        TORCH_CHECK(input.device().is_cuda(), "Input tensor must be on CUDA device");
+        TORCH_CHECK(input.dtype() == torch::kFloat32, "Input tensor must be float32");
+        TORCH_CHECK(input.dim() == 3, "Input tensor must be 3D (H, W, 1)");
+        TORCH_CHECK(input.size(2) == 1, "Input must have single channel (raw Bayer)");
+        TORCH_CHECK(input.size(0) == height_ && input.size(1) == width_, "Input dimensions must match workspace size");
+
+        auto contiguous_input = input.contiguous();
+        auto stream = at::cuda::getCurrentCUDAStream().stream();
+
+        dim3 block(16, 16);
+        dim3 grid((width_ + block.x - 1) / block.x, (height_ + block.y - 1) / block.y);
+
+        const auto buffer_opts = torch::TensorOptions().dtype(torch::kFloat32).device(device_);
+        torch::Tensor output_buffer = torch::zeros({height_, width_, 4}, buffer_opts);
+
+
+        const int median_stride = block.x + 2*2;
+        const int median_shared_size = median_stride * (block.y + 2*2) * sizeof(float);
+        const int green_stride = block.x + 2*3;
+        const int green_shared_size = green_stride * (block.y + 2*3) * sizeof(float);
+        const int redblue_stride = block.x + 2;
+        const int redblue_shared_size = redblue_stride * (block.y + 2) * sizeof(float4);
+
+        auto* processing_input = contiguous_input.data_ptr<float>();
+
+        float4* temp_ptr = reinterpret_cast<float4*>(temp_buffer_.data_ptr<float>());
+
+        border_interpolate_kernel<<<grid, block, 0, stream>>>(
+            contiguous_input.data_ptr<float>(), temp_ptr,
+            width_, height_, filters_, 3);
+
+        if (median_threshold_ > 0.0f) {
+            pre_median_kernel<<<grid, block, median_shared_size, stream>>>(
+                contiguous_input.data_ptr<float>(), temp_median_.data_ptr<float>(),
+                width_, height_, filters_, median_threshold_);
+
+            processing_input = temp_median_.data_ptr<float>();
+        }
+
+        ppg_demosaic_green_kernel<<<grid, block, green_shared_size, stream>>>(
+            processing_input, temp_ptr,
+            width_, height_, filters_);
+
+        ppg_demosaic_redblue_kernel<<<grid, block, redblue_shared_size, stream>>>(
+            temp_ptr,
+            reinterpret_cast<float4*>(output_buffer.data_ptr<float>()),
+            width_, height_, filters_);
+
+        return output_buffer;
+    }
+
+    int get_width() const override { return width_; }
+    int get_height() const override { return height_; }
+};
+
+std::shared_ptr<PPG> create_ppg(torch::Device device, int width, int height, uint32_t filters, 
+  float median_threshold) {
+    return std::make_shared<PPGImpl>(device, width, height, filters, median_threshold);
 }
