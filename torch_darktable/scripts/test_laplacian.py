@@ -5,7 +5,7 @@ from PIL import Image
 import numpy as np
 
 from torch_darktable import local_laplacian_rgb, create_laplacian, LaplacianParams
-
+from torch_darktable import compute_luminance
 
 def create_laplacian_algorithm(device, height, width, args):
     """Create Laplacian algorithm from args object."""
@@ -17,6 +17,27 @@ def create_laplacian_algorithm(device, height, width, args):
         clarity=args.clarity
     )
     return create_laplacian(device, (width, height), params=params), params
+
+
+# def reinhard(image: torch.Tensor) -> torch.Tensor:
+#     lum = compute_luminance(image)
+#     log_lum = (lum + 1e-6).log().mean()
+#     key = (lum.max() - log_lum) / (lum.max() - lum.min())
+#     map_key = 0.3 + 0.7 * key**1.4
+
+#     return image * (1.0 / (map_key + 1.0))-
+
+
+def reinhard(image: torch.Tensor, epsilon=1e-4, base_key=0.18, gamma=0.75) -> torch.Tensor:
+    lum = compute_luminance(image)
+    log_avg = torch.exp(torch.log(lum + epsilon).mean())
+    key = base_key / log_avg
+
+    scaled = image * key
+
+    tonemapped = (scaled / (1.0 + scaled))**gamma
+
+    return tonemapped.clamp(0.0, 1.0)
 
 
 def load_rgb_image(image_path: Path) -> torch.Tensor:
@@ -50,13 +71,19 @@ def test_laplacian(image_path: Path, args):
 
     print(f"Parameters: gamma={params.num_gamma}, sigma={params.sigma}, shadows={params.shadows}, highlights={params.highlights}, clarity={params.clarity}")
 
+    if args.tonemap:
+        input_rgb = reinhard(input_rgb)
+
+
     # Apply local Laplacian filter with RGB->LAB->RGB conversion
     print("Applying local Laplacian filter to RGB image...")
     result_rgb = local_laplacian_rgb(workspace, input_rgb)
 
+
     # Convert results to displayable format
     input_display = (input_rgb.cpu().numpy() * 255).astype(np.uint8)
     result_display = (result_rgb.cpu().numpy() * 255).astype(np.uint8)
+
 
     # Create side-by-side comparison
     combined = np.hstack([input_display, result_display])
@@ -77,12 +104,16 @@ def main():
                        help='Number of gamma levels (4, 6, or 8)')
     parser.add_argument('--sigma', type=float, default=0.2,
                        help='Tone mapping parameter controlling transitions (default: 0.2)')
-    parser.add_argument('--shadows', type=float, default=0.15,
-                       help='Shadow enhancement (-1.0 to 1.0, positive lifts shadows, default: 0.15)')
-    parser.add_argument('--highlights', type=float, default=0.1,
-                       help='Highlight compression (-1.0 to 1.0, positive compresses highlights, default: 0.1)')
-    parser.add_argument('--clarity', type=float, default=0.15,
-                       help='Local contrast enhancement (-1.0 to 1.0, positive increases clarity, default: 0.15)')
+    parser.add_argument('--shadows', type=float, default=1.0,
+                       help='Shadow enhancement, default: 1.0')
+    parser.add_argument('--highlights', type=float, default=1.0,
+                       help='Highlight compression, default: 1.0')
+    parser.add_argument('--clarity', type=float, default=0.0,
+                       help='Local contrast enhancement, default: 0.0')
+
+    parser.add_argument('--tonemap', action='store_true',
+                       help='Tonemap the output image')
+
     args = parser.parse_args()
 
     test_laplacian(args.image, args)

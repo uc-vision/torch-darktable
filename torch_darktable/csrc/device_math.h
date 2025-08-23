@@ -27,6 +27,10 @@ __device__ inline float clipf(float x) {
     return fminf(fmaxf(x, 0.0f), 1.0f);
 }
 
+__device__ __host__ inline int clamp(int x, int low, int high) {
+    return min(max(x, low), high);
+}
+
 __device__ inline int2 get_thread_pos() {
     return make_int2(blockIdx.x * blockDim.x + threadIdx.x, blockIdx.y * blockDim.y + threadIdx.y);
 }

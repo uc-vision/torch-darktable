@@ -5,10 +5,10 @@ from typing import Callable
 
 from torch_darktable import BayerPattern
 from torch_darktable.utilities import load_image, rgb_to_bayer
-from torch_darktable import ppg_demosaic, rcd_demosaic, postprocess_demosaic
+from torch_darktable import ppg_demosaic, rcd_demosaic, postprocess_demosaic, create_laplacian, compute_luminance
 
 
-def benchmark(func: Callable, *args, warmup_iters: int = 5, bench_iters: int = 50) -> float:
+def benchmark(name: str, func: Callable, *args, warmup_iters: int = 5, bench_iters: int = 50) -> float:
     # Warmup
     for _ in range(warmup_iters):
         func(*args)
@@ -27,7 +27,9 @@ def benchmark(func: Callable, *args, warmup_iters: int = 5, bench_iters: int = 5
     torch.cuda.synchronize()
     elapsed_ms = start_event.elapsed_time(end_event)
 
-    return (1000.0 * bench_iters) / elapsed_ms
+    rate = (1000.0 * bench_iters) / elapsed_ms
+    print(f"{name}: {bench_iters} iterations in {elapsed_ms:.3f}ms at {rate:.1f} iters/sec")
+    return rate
 
 
 
@@ -54,27 +56,28 @@ def run_benchmark(image_path: Path, pattern: BayerPattern, warmup_iters: int = 5
     green_eq_alg = postprocess_demosaic(bayer_input.device, (width, height), pattern,
                                     green_eq_local=True, green_eq_global=True)
 
+    laplacian_alg = create_laplacian(bayer_input.device, (width, height))
+
     print("=== Demosaic Algorithm Benchmarks ===")
 
-    # Benchmark PPG using pre-created algorithm
-    time_ms = benchmark(ppg_alg.process, bayer_input, warmup_iters=warmup_iters, bench_iters=bench_iters)
-    print(f"PPG           : {time_ms:6.2f} images/sec")
-
-    # Benchmark RCD using pre-created algorithm
-    time_ms = benchmark(rcd_alg.process, bayer_input, warmup_iters=warmup_iters, bench_iters=bench_iters)
-    print(f"RCD           : {time_ms:6.2f} images/sec")
+    benchmark("PPG", ppg_alg.process, bayer_input, warmup_iters=warmup_iters, bench_iters=bench_iters)
+    benchmark("RCD", rcd_alg.process, bayer_input, warmup_iters=warmup_iters, bench_iters=bench_iters)
 
     print()
 
-    # Benchmark post-processing (use PPG result as input)
     print("=== Post-processing Benchmarks ===")
-    ppg_result = ppg_alg.process(bayer_input)
+    rgba_tensor = torch.cat([rgb_tensor, torch.ones_like(rgb_tensor[:, :, 0:1])], dim=2)
 
-    time_ms = benchmark(color_smooth_alg.process, ppg_result, warmup_iters=warmup_iters, bench_iters=bench_iters)
-    print(f"Color smooth  : {time_ms:6.2f} images/sec")
+    benchmark("Color smooth", color_smooth_alg.process, rgba_tensor, warmup_iters=warmup_iters, bench_iters=bench_iters)
+    benchmark("Green eq", green_eq_alg.process, rgba_tensor, warmup_iters=warmup_iters, bench_iters=bench_iters)
 
-    time_ms = benchmark(green_eq_alg.process, ppg_result, warmup_iters=warmup_iters, bench_iters=bench_iters)
-    print(f"Green eq      : {time_ms:6.2f} images/sec")
+    print()
+
+    print("=== Laplacian Benchmarks ===")
+
+    mono_tensor = compute_luminance(rgb_tensor)
+    benchmark("Laplacian", laplacian_alg.process, mono_tensor, warmup_iters=warmup_iters, bench_iters=bench_iters)
+
 
 
 def main():

@@ -64,18 +64,6 @@ __device__ float read_imagef(float* data, int2 coord, int2 size) {
     return data[coord.y * size.x + coord.x];
 }
 
-// Clamped version for boundary handling
-__device__ float clamped_read_imagef(float* data, int2 coord, int2 size) {
-    int x = coord.x;
-    int y = coord.y;
-    if(x < 0) x = 0;
-    if(y < 0) y = 0;
-    if(x >= size.x) x = size.x - 1;
-    if(y >= size.y) y = size.y - 1;
-    
-    int index = y * size.x + x;
-    return data[index];
-}
 
 // OpenCL-style wrapper for image writing (single channel)
 __device__ void write_imagef(float* output, int2 coord, int2 size, float value) {
@@ -99,7 +87,7 @@ __global__ void pad_input(
     if(c.x < 0) c.x = 0;
     if(c.y < 0) c.y = 0;
 
-    float pixel_val = read_imagef(input, c, input_size) * 0.01f;
+    float pixel_val = read_imagef(input, c, input_size);
     write_imagef(padded, pos, padded_size, pixel_val);
 }
 
@@ -110,60 +98,55 @@ __device__ float expand_gaussian(
     const int2 coarse_size)
 {
     float c = 0.0f;
-    const float w[5] = {1.0f/16.0f, 4.0f/16.0f, 6.0f/16.0f, 4.0f/16.0f, 1.0f/16.0f};
+    constexpr float w[5] = {1.0f/16.0f, 4.0f/16.0f, 6.0f/16.0f, 4.0f/16.0f, 1.0f/16.0f};
     const int2 coarse_pos = pos / 2;
     
     switch((pos.x&1) + 2*(pos.y&1))
     {
         case 0: // both are even, 3x3 stencil
-            for(int i=-1;i<=1;i++) 
+            #pragma unroll
+            for(int i=-1;i<=1;i++) {
+              #pragma unroll
               for(int j=-1;j<=1;j++) {
-                float pixel = clamped_read_imagef(coarse, coarse_pos + make_int2(i, j), coarse_size);
+                float pixel = read_imagef(coarse, coarse_pos + make_int2(i, j), coarse_size);
                 c += pixel*w[2*j+2]*w[2*i+2];
+              }
             }
             break;
         case 1: // i is odd, 2x3 stencil
-            for(int i=0;i<=1;i++) 
+            #pragma unroll
+            for(int i=0;i<=1;i++) {
+              #pragma unroll
               for(int j=-1;j<=1;j++) {
-                float pixel = clamped_read_imagef(coarse, coarse_pos + make_int2(i, j), coarse_size);
+                float pixel = read_imagef(coarse, coarse_pos + make_int2(i, j), coarse_size);
                 c += pixel*w[2*j+2]*w[2*i+1];
+              }
             }
             break;
         case 2: // j is odd, 3x2 stencil
-            for(int i=-1;i<=1;i++) 
+           #pragma unroll
+            for(int i=-1;i<=1;i++) {
+              #pragma unroll
               for(int j=0;j<=1;j++) {
-                float pixel = clamped_read_imagef(coarse, coarse_pos + make_int2(i, j), coarse_size);
+                float pixel = read_imagef(coarse, coarse_pos + make_int2(i, j), coarse_size);
                 c += pixel*w[2*j+1]*w[2*i+2];
+              }
             }
             break;
         default: // case 3: // both are odd, 2x2 stencil
-            for(int i=0;i<=1;i++) 
+            #pragma unroll
+            for(int i=0;i<=1;i++) {
+              #pragma unroll
               for(int j=0;j<=1;j++) {
-                float pixel = clamped_read_imagef(coarse, coarse_pos + make_int2(i, j), coarse_size);
+                float pixel = read_imagef(coarse, coarse_pos + make_int2(i, j), coarse_size);
                 c += pixel*w[2*j+1]*w[2*i+1];
+              }
             }
-            break;
+            break;  
     }
     return 4.0f * c;
 }
 
-__global__ void
-gauss_expand(
-    float* coarse,                   // coarse input
-    float* fine,                     // upsampled blurry output
-    const int2 fine_size,                    // resolution of fine, also run kernel on fine res
-    const int2 coarse_size)
-{
-    const int2 pos = get_thread_pos();
-    int2 c = pos;
-
-    if(pos.x >= fine_size.x || pos.y >= fine_size.y) return;
-    
-    c = clamp_boundary(pos, fine_size);
-
-    float pixel_val = expand_gaussian(coarse, c, fine_size, coarse_size);
-    write_imagef(fine, pos, fine_size, pixel_val);
-}
 
 __global__ void
 gauss_reduce(
@@ -184,16 +167,20 @@ gauss_reduce(
 
     // blur, store only coarse res
     float pixel_val = 0.0f;
-    const float w[5] = {1.0f/16.0f, 4.0f/16.0f, 6.0f/16.0f, 4.0f/16.0f, 1.0f/16.0f};
+    constexpr float w[5] = {1.0f/16.0f, 4.0f/16.0f, 6.0f/16.0f, 4.0f/16.0f, 1.0f/16.0f};
     // direct 5x5 stencil only on required pixels:
-    for(int j=-2;j<=2;j++) 
-      for(int i=-2;i<=2;i++)
+    #pragma unroll
+    for(int j=-2;j<=2;j++) {
+      #pragma unroll
+      for(int i=-2;i<=2;i++) {
         pixel_val += read_imagef(input, 2*c + make_int2(i, j), input_size) * w[i+2] * w[j+2];
+      }
+    }
 
     write_imagef(coarse, pos, coarse_size, pixel_val);
 }
 
-__device__ float laplacian(
+__device__ inline float laplacian(
     float* tex_coarse,  // coarse res gaussian
     float* tex_fine,    // fine res gaussian
     const int2 pos,                     // fine index
@@ -292,7 +279,7 @@ __global__ void write_back(
     const int2 pos = get_thread_pos();
     if(pos.x >= output_size.x || pos.y >= output_size.y) return;
 
-    float processed_val = 100.0f*read_imagef(tex_processed, pos + max_supp, processed_size);
+    float processed_val = read_imagef(tex_processed, pos + max_supp, processed_size);
     write_imagef(output, pos, output_size, processed_val);
 }
 

@@ -24,27 +24,15 @@ class LaplacianParams:
     sigma: float = 0.2
     """Tone mapping parameter controlling transitions between regions (0.0-1.0)"""
     
-    shadows: float = 0.0
+    shadows: float = 1.0
     """Shadow enhancement (-1.0 to 1.0, negative lifts shadows)"""
     
-    highlights: float = 0.0
+    highlights: float = 1.0
     """Highlight compression (-1.0 to 1.0, positive compresses highlights)"""
     
     clarity: float = 0.0
     """Local contrast enhancement (-1.0 to 1.0, positive increases clarity)"""
-    
-    def __post_init__(self):
-        """Validate parameter ranges."""
-        if self.num_gamma not in [4, 6, 8]:
-            raise ValueError(f"Gamma levels must be 4, 6, or 8, got {self.num_gamma}")
-        if not 0.0 <= self.sigma <= 1.0:
-            raise ValueError(f"Sigma must be in range [0.0, 1.0], got {self.sigma}")
-        if not -1.0 <= self.shadows <= 1.0:
-            raise ValueError(f"Shadows must be in range [-1.0, 1.0], got {self.shadows}")
-        if not -1.0 <= self.highlights <= 1.0:
-            raise ValueError(f"Highlights must be in range [-1.0, 1.0], got {self.highlights}")
-        if not -1.0 <= self.clarity <= 1.0:
-            raise ValueError(f"Clarity must be in range [-1.0, 1.0], got {self.clarity}")
+
 
 
 # Dynamic compilation of CUDA extension
@@ -218,9 +206,22 @@ def local_laplacian_rgb(
     return extension.modify_luminance(image, processed_luminance)
 
 
+compute_luminance = extension.compute_luminance
+modify_luminance = extension.modify_luminance
+
+rgb_to_lab = extension.rgb_to_lab
+lab_to_rgb = extension.lab_to_rgb
+
+rgb_to_xyz = extension.rgb_to_xyz
+xyz_to_lab = extension.xyz_to_lab
+lab_to_xyz = extension.lab_to_xyz
+xyz_to_rgb = extension.xyz_to_rgb
 
 
 __all__ = [
     "BayerPattern", "LaplacianParams",
-    "create_laplacian", "local_laplacian_rgb"
+    "create_laplacian", "local_laplacian_rgb",
+    "compute_luminance", "modify_luminance",
+    "rgb_to_lab", "lab_to_rgb",
+    "rgb_to_xyz", "xyz_to_lab", "lab_to_xyz", "xyz_to_rgb"
 ]
