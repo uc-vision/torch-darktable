@@ -1,7 +1,7 @@
 import torch
 import argparse
 from pathlib import Path
-from PIL import Image
+import cv2
 import numpy as np
 
 from torch_darktable import local_laplacian_rgb, create_laplacian, LaplacianParams
@@ -19,14 +19,6 @@ def create_laplacian_algorithm(device, height, width, args):
     return create_laplacian(device, (width, height), params=params), params
 
 
-# def reinhard(image: torch.Tensor) -> torch.Tensor:
-#     lum = compute_luminance(image)
-#     log_lum = (lum + 1e-6).log().mean()
-#     key = (lum.max() - log_lum) / (lum.max() - lum.min())
-#     map_key = 0.3 + 0.7 * key**1.4
-
-#     return image * (1.0 / (map_key + 1.0))-
-
 
 def reinhard(image: torch.Tensor, epsilon=1e-4, base_key=0.18, gamma=0.75) -> torch.Tensor:
     lum = compute_luminance(image)
@@ -36,7 +28,6 @@ def reinhard(image: torch.Tensor, epsilon=1e-4, base_key=0.18, gamma=0.75) -> to
     scaled = image * key
 
     tonemapped = (scaled / (1.0 + scaled))**gamma
-
     return tonemapped.clamp(0.0, 1.0)
 
 
@@ -44,15 +35,15 @@ def load_rgb_image(image_path: Path) -> torch.Tensor:
     """Load RGB image as tensor."""
     if not image_path.exists():
         raise FileNotFoundError(f"Image not found: {image_path}")
-    
-    # Load as RGB
-    img = Image.open(image_path).convert('RGB')
-    rgb_array = np.array(img, dtype=np.float32) / 255.0
-    
-    # Convert to tensor (H, W, 3)
-    tensor = torch.from_numpy(rgb_array).cuda()
-    
-    return tensor
+
+    img_array = cv2.imread(str(image_path), -1)  # -1 preserves bit depth
+
+    rgb_array = img_array.astype(np.float32)
+    print(f"range: {np.min(rgb_array):.3f} - {np.max(rgb_array):.3f}")
+
+    rgb_array = rgb_array / np.max(rgb_array)
+
+    return torch.from_numpy(rgb_array).cuda()
 
 def test_laplacian(image_path: Path, args):
     """Test local Laplacian filter on RGB image using LAB color space processing."""
@@ -71,28 +62,32 @@ def test_laplacian(image_path: Path, args):
 
     print(f"Parameters: gamma={params.num_gamma}, sigma={params.sigma}, shadows={params.shadows}, highlights={params.highlights}, clarity={params.clarity}")
 
-    if args.tonemap:
-        input_rgb = reinhard(input_rgb)
+
 
 
     # Apply local Laplacian filter with RGB->LAB->RGB conversion
     print("Applying local Laplacian filter to RGB image...")
     result_rgb = local_laplacian_rgb(workspace, input_rgb)
 
+    if args.tonemap:
+        input_rgb = reinhard(input_rgb)
+        result_rgb = reinhard(result_rgb)
 
     # Convert results to displayable format
     input_display = (input_rgb.cpu().numpy() * 255).astype(np.uint8)
     result_display = (result_rgb.cpu().numpy() * 255).astype(np.uint8)
 
-
     # Create side-by-side comparison
     combined = np.hstack([input_display, result_display])
 
-    # Show results
-    combined_img = Image.fromarray(combined)
-
     print("Showing results (original | filtered)...")
-    combined_img.show()
+    print("Press any key to close")
+
+    cv2.namedWindow("Image", cv2.WINDOW_NORMAL)
+    cv2.imshow("Image", combined)
+    while cv2.waitKey(1):
+        pass
+    cv2.destroyAllWindows()
 
     print(f"Output RGB range: {result_rgb.min().item():.3f} - {result_rgb.max().item():.3f}")
 
