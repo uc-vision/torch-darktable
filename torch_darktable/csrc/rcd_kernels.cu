@@ -43,7 +43,7 @@ __global__ void rcd_populate_kernel(float* input, float* cfa, float* rgb0, float
 }
 
 // Write back-normalized data in rgb channels to output
-__global__ void rcd_write_output_kernel(float4* output, float* rgb0, float* rgb1, float* rgb2, 
+__global__ void rcd_write_output_kernel(float3* output, float* rgb0, float* rgb1, float* rgb2, 
                                        int width, int height, float scale, int border)
 {
     const int col = blockIdx.x * blockDim.x + threadIdx.x;
@@ -51,10 +51,9 @@ __global__ void rcd_write_output_kernel(float4* output, float* rgb0, float* rgb1
     if(!(col >= border && col < width - border && row >= border && row < height - border)) return;
     
     const int idx = row * width + col;
-    output[idx] = make_float4(fmaxf(scale * rgb0[idx], 0.0f), 
+    output[idx] = make_float3(fmaxf(scale * rgb0[idx], 0.0f), 
                              fmaxf(scale * rgb1[idx], 0.0f), 
-                             fmaxf(scale * rgb2[idx], 0.0f), 
-                             1.0f);
+                             fmaxf(scale * rgb2[idx], 0.0f));
 }
 
 // Step 1.1: Calculate a squared vertical and horizontal high pass filter on color differences
@@ -280,7 +279,7 @@ __global__ void rcd_step_5_2_kernel(float* VH_dir, float* rgb0, float* rgb1, flo
 }
 
 // Border interpolation kernels
-__global__ void rcd_border_green_kernel(float* input, float4* output, int width, int height,
+__global__ void rcd_border_green_kernel(float* input, float3* output, int width, int height,
                                        uint32_t filters, int border)
 {
     extern __shared__ float green_buffer[];
@@ -330,7 +329,7 @@ __global__ void rcd_border_green_kernel(float* input, float4* output, int width,
     const int row = y;
     const int col = x;
     const int c = fc(row, col, filters);
-    float4 color = make_float4(0.0f, 0.0f, 0.0f, 1.0f); // output color
+    float3 color = make_float3(0.0f, 0.0f, 0.0f); // output color
 
     const float pc = centered_buffer[0];
 
@@ -379,13 +378,13 @@ __global__ void rcd_border_green_kernel(float* input, float4* output, int width,
             color.y = fmaxf(fminf(guessx*0.25f, M), m);
         }
     }
-    output[y * width + x] = make_float4(fmaxf(color.x, 0.0f), fmaxf(color.y, 0.0f), fmaxf(color.z, 0.0f), 1.0f);
+    output[y * width + x] = make_float3(fmaxf(color.x, 0.0f), fmaxf(color.y, 0.0f), fmaxf(color.z, 0.0f));
 }
 
-__global__ void rcd_border_redblue_kernel(float4* input, float4* output, int width, int height,
+__global__ void rcd_border_redblue_kernel(float3* input, float3* output, int width, int height,
                                          uint32_t filters, int border)
 {
-    extern __shared__ float4 redblue_buffer[];
+    extern __shared__ float3 redblue_buffer[];
     // image in contains full green and sparse r b
     const int x = blockIdx.x * blockDim.x + threadIdx.x;
     const int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -419,14 +418,14 @@ __global__ void rcd_border_redblue_kernel(float4* input, float4* output, int wid
         const int xx = xul + bufidx % stride;
         const int yy = yul + bufidx / stride;
         redblue_buffer[bufidx] = (xx >= 0 && yy >= 0 && xx < width && yy < height) ? 
-                        make_float4(fmaxf(0.0f, input[yy * width + xx].x), 
+                        make_float3(fmaxf(0.0f, input[yy * width + xx].x), 
                                    fmaxf(0.0f, input[yy * width + xx].y),
-                                   fmaxf(0.0f, input[yy * width + xx].z), 1.0f) : 
-                        make_float4(0.0f, 0.0f, 0.0f, 1.0f);
+                                   fmaxf(0.0f, input[yy * width + xx].z)) : 
+                        make_float3(0.0f, 0.0f, 0.0f);
     }
 
     // center buffer around current x,y-Pixel
-    float4* centered_buffer = redblue_buffer + (ylid + 1) * stride + xlid + 1;
+    float3* centered_buffer = redblue_buffer + (ylid + 1) * stride + xlid + 1;
 
     __syncthreads();
 
@@ -436,16 +435,16 @@ __global__ void rcd_border_redblue_kernel(float4* input, float4* output, int wid
     const int row = y;
     const int col = x;
     const int c = fc(row, col, filters);
-    float4 color = centered_buffer[0];
+    float3 color = centered_buffer[0];
     if(row > 0 && col > 0 && col < width - 1 && row < height - 1)
     {
         if(c == 1 || c == 3)
         { // calculate red and blue for green pixels:
             // need 4-nbhood:
-            const float4 nt = centered_buffer[-stride];
-            const float4 nb = centered_buffer[ stride];
-            const float4 nl = centered_buffer[-1];
-            const float4 nr = centered_buffer[ 1];
+            const float3 nt = centered_buffer[-stride];
+            const float3 nb = centered_buffer[ stride];
+            const float3 nl = centered_buffer[-1];
+            const float3 nr = centered_buffer[ 1];
             if(fc(row, col+1, filters) == 0) // red nb in same row
             {
                 color.z = (nt.z + nb.z + 2.0f*color.y - nt.y - nb.y)*0.5f;
@@ -460,10 +459,10 @@ __global__ void rcd_border_redblue_kernel(float4* input, float4* output, int wid
         else
         {
             // get 4-star-nbhood:
-            const float4 ntl = centered_buffer[-stride - 1];
-            const float4 ntr = centered_buffer[-stride + 1];
-            const float4 nbl = centered_buffer[ stride - 1];
-            const float4 nbr = centered_buffer[ stride + 1];
+            const float3 ntl = centered_buffer[-stride - 1];
+            const float3 ntr = centered_buffer[-stride + 1];
+            const float3 nbl = centered_buffer[ stride - 1];
+            const float3 nbr = centered_buffer[ stride + 1];
 
             if(c == 0)
             { // red pixel, fill blue:
@@ -487,7 +486,7 @@ __global__ void rcd_border_redblue_kernel(float4* input, float4* output, int wid
             }
         }
     }
-    output[y * width + x] = make_float4(fmaxf(color.x, 0.0f), fmaxf(color.y, 0.0f), fmaxf(color.z, 0.0f), 1.0f);
+    output[y * width + x] = make_float3(fmaxf(color.x, 0.0f), fmaxf(color.y, 0.0f), fmaxf(color.z, 0.0f));
 }
 
 // Additional utility kernels for blending and masking
@@ -584,7 +583,7 @@ struct RCDImpl : public RCD {
           input_scale_(input_scale), output_scale_(output_scale) {
 
         const auto buffer_opts = torch::TensorOptions().dtype(torch::kFloat32).device(device);
-        output_buffer_ = torch::zeros({height, width, 4}, buffer_opts);
+        output_buffer_ = torch::zeros({height, width, 3}, buffer_opts);
         cfa_ = torch::zeros({height, width}, buffer_opts);
         rgb0_ = torch::zeros({height, width}, buffer_opts);
         rgb1_ = torch::zeros({height, width}, buffer_opts);
@@ -615,20 +614,20 @@ struct RCDImpl : public RCD {
         dim3 grid_half((width_/2 + block.x - 1) / block.x, (height_ + block.y - 1) / block.y);
 
         border_interpolate_kernel<<<grid, block, 0, stream>>>(
-            contiguous_input.data_ptr<float>(), reinterpret_cast<float4*>(output_buffer_.data_ptr<float>()),
+            contiguous_input.data_ptr<float>(), reinterpret_cast<float3*>(output_buffer_.data_ptr<float>()),
             width_, height_, filters_, 3);
 
         const int green_stride = block.x + 2*3;
         const int green_shared_size = green_stride * (block.y + 2*3) * sizeof(float);
         rcd_border_green_kernel<<<grid, block, green_shared_size, stream>>>(
-            contiguous_input.data_ptr<float>(), reinterpret_cast<float4*>(output_buffer_.data_ptr<float>()),
+            contiguous_input.data_ptr<float>(), reinterpret_cast<float3*>(output_buffer_.data_ptr<float>()),
             width_, height_, filters_, 32);
 
         const int redblue_stride = block.x + 2;
-        const int redblue_shared_size = redblue_stride * (block.y + 2) * sizeof(float4);
+        const int redblue_shared_size = redblue_stride * (block.y + 2) * sizeof(float3);
         rcd_border_redblue_kernel<<<grid, block, redblue_shared_size, stream>>>(
-            reinterpret_cast<float4*>(output_buffer_.data_ptr<float>()),
-            reinterpret_cast<float4*>(output_buffer_.data_ptr<float>()),
+            reinterpret_cast<float3*>(output_buffer_.data_ptr<float>()),
+            reinterpret_cast<float3*>(output_buffer_.data_ptr<float>()),
             width_, height_, filters_, 16);
 
         rcd_populate_kernel<<<grid, block, 0, stream>>>(
@@ -665,7 +664,7 @@ struct RCDImpl : public RCD {
             rgb2_.data_ptr<float>(), width_, height_, filters_);
 
         rcd_write_output_kernel<<<grid, block, 0, stream>>>(
-            reinterpret_cast<float4*>(output_buffer_.data_ptr<float>()), rgb0_.data_ptr<float>(),
+            reinterpret_cast<float3*>(output_buffer_.data_ptr<float>()), rgb0_.data_ptr<float>(),
             rgb1_.data_ptr<float>(), rgb2_.data_ptr<float>(), width_, height_, output_scale_, RCD_MARGIN);
 
         return output_buffer_;

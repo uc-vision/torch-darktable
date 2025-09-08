@@ -60,4 +60,4 @@ __device__ inline float mix(float a, float b, float t) {
 
 
 // Forward declaration of shared function from ppg_kernels.cu
-__global__ void border_interpolate_kernel(float* input, float4* output, int width, int height, uint32_t filters, int border);
+__global__ void border_interpolate_kernel(float* input, float3* output, int width, int height, uint32_t filters, int border);

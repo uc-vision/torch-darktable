@@ -6,6 +6,7 @@ from typing import Callable
 from torch_darktable import BayerPattern
 from torch_darktable.utilities import load_image, rgb_to_bayer
 from torch_darktable import ppg_demosaic, rcd_demosaic, postprocess_demosaic, create_laplacian, compute_luminance
+from torch_darktable import create_bilateral
 
 
 def benchmark(name: str, func: Callable, *args, warmup_iters: int = 5, bench_iters: int = 50) -> float:
@@ -57,6 +58,7 @@ def run_benchmark(image_path: Path, pattern: BayerPattern, warmup_iters: int = 5
                                     green_eq_local=True, green_eq_global=True)
 
     laplacian_alg = create_laplacian(bayer_input.device, (width, height))
+    bilateral_alg = create_bilateral(bayer_input.device, (width, height), sigma_s=2.0, sigma_r=0.2, detail=0.2)
 
     print("=== Demosaic Algorithm Benchmarks ===")
 
@@ -66,17 +68,16 @@ def run_benchmark(image_path: Path, pattern: BayerPattern, warmup_iters: int = 5
     print()
 
     print("=== Post-processing Benchmarks ===")
-    rgba_tensor = torch.cat([rgb_tensor, torch.ones_like(rgb_tensor[:, :, 0:1])], dim=2)
-
-    benchmark("Color smooth", color_smooth_alg.process, rgba_tensor, warmup_iters=warmup_iters, bench_iters=bench_iters)
-    benchmark("Green eq", green_eq_alg.process, rgba_tensor, warmup_iters=warmup_iters, bench_iters=bench_iters)
+    benchmark("Color smooth", color_smooth_alg.process, rgb_tensor, warmup_iters=warmup_iters, bench_iters=bench_iters)
+    benchmark("Green eq", green_eq_alg.process, rgb_tensor, warmup_iters=warmup_iters, bench_iters=bench_iters)
 
     print()
 
-    print("=== Laplacian Benchmarks ===")
+    print("=== Laplacian/Bilateral Benchmarks ===")
 
     mono_tensor = compute_luminance(rgb_tensor)
     benchmark("Laplacian", laplacian_alg.process, mono_tensor, warmup_iters=warmup_iters, bench_iters=bench_iters)
+    benchmark("Bilateral", bilateral_alg.process, mono_tensor, warmup_iters=warmup_iters, bench_iters=bench_iters)
 
 
 

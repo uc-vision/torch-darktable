@@ -17,6 +17,7 @@ dependencies = [
 [project.scripts]
 test-debayer = "torch_darktable.scripts.test_debayer:main"
 test-laplacian = "torch_darktable.scripts.test_laplacian:main"
+test-bilateral = "torch_darktable.scripts.test_bilateral:main"
 run-benchmark = "torch_darktable.scripts.run_benchmark:main"
 
 

@@ -32,12 +32,12 @@ __device__ __forceinline__ void cas(float& a, float& b) {
  * Applied to R-G and B-G differences to preserve luminance
  */
 __global__ void color_smoothing_kernel(
-    float4* input,
-    float4* output,
+    float3* input,
+    float3* output,
     int width,
     int height
 ) {
-    extern __shared__ float4 smoothing_buffer[];
+    extern __shared__ float3 smoothing_buffer[];
     
     const int lxid = threadIdx.x;
     const int lyid = threadIdx.y;
@@ -66,7 +66,7 @@ __global__ void color_smoothing_kernel(
         if(gx >= width + 1 || gy >= height + 1) continue;
 
         smoothing_buffer[bufidx] = (gx >= 0 && gy >= 0 && gx < width && gy < height) ? 
-                                   input[gy * width + gx] : make_float4(0.0f, 0.0f, 0.0f, 0.0f);
+                                   input[gy * width + gx] : make_float3(0.0f, 0.0f, 0.0f);
     }
 
     __syncthreads();
@@ -74,9 +74,9 @@ __global__ void color_smoothing_kernel(
     if(x >= width || y >= height) return;
 
     // re-position buffer
-    float4* centered_buffer = smoothing_buffer + (lyid + 1) * buffwd + lxid + 1;
+    float3* centered_buffer = smoothing_buffer + (lyid + 1) * buffwd + lxid + 1;
 
-    float4 o = centered_buffer[0];
+    float3 o = centered_buffer[0];
 
     // 3x3 median for R (R-G difference)
     float s0 = centered_buffer[-buffwd - 1].x - centered_buffer[-buffwd - 1].y;
@@ -144,7 +144,7 @@ __global__ void color_smoothing_kernel(
 
     o.z = fmaxf(s4 + o.y, 0.0f);
 
-    output[y * width + x] = make_float4(fmaxf(o.x, 0.0f), fmaxf(o.y, 0.0f), fmaxf(o.z, 0.0f), o.w);
+    output[y * width + x] = make_float3(fmaxf(o.x, 0.0f), fmaxf(o.y, 0.0f), fmaxf(o.z, 0.0f));
 }
 
 /**
@@ -152,8 +152,8 @@ __global__ void color_smoothing_kernel(
  * Corrects green channel imbalance using local neighborhood analysis
  */
 __global__ void green_eq_local_kernel(
-    float4* input,
-    float4* output,
+    float3* input,
+    float3* output,
     int width,
     int height,
     uint32_t filters,
@@ -205,7 +205,7 @@ __global__ void green_eq_local_kernel(
 
     const int c = FC(y, x, filters);
     const float maximum = 1.0f;
-    float4 pixel = input[y * width + x];
+    float3 pixel = input[y * width + x];
     float o = pixel.y; // Start with green channel
 
     if(c == 1 && (y & 1)) // Green2 pixels (odd rows)
@@ -243,7 +243,7 @@ __global__ void green_eq_local_kernel(
  * Reduces green channel values across work groups
  */
 __global__ void green_eq_global_reduce_first_kernel(
-    float4* input,
+    float3* input,
     int width,
     int height,
     float2* accu,
@@ -302,8 +302,8 @@ __global__ void green_eq_global_reduce_first_kernel(
  * Applies the calculated global ratio to Green1 pixels
  */
 __global__ void green_eq_global_apply_kernel(
-    float4* input,
-    float4* output,
+    float3* input,
+    float3* output,
     int width,
     int height,
     uint32_t filters,
@@ -314,17 +314,20 @@ __global__ void green_eq_global_apply_kernel(
 
     if(x >= width || y >= height) return;
 
-    float4 pixel = input[y * width + x];
+    float3 pixel = input[y * width + x];
 
     const int c = FC(y, x, filters);
     const int isgreen1 = (c == 1 && !(y & 1));
 
     pixel.y *= (isgreen1 ? gr_ratio : 1.0f);
-    output[y * width + x] = make_float4(fmaxf(pixel.x, 0.0f), fmaxf(pixel.y, 0.0f), 
-                                       fmaxf(pixel.z, 0.0f), pixel.w);
+    output[y * width + x] = make_float3(fmaxf(pixel.x, 0.0f), fmaxf(pixel.y, 0.0f), 
+                                       fmaxf(pixel.z, 0.0f));
 }
 
 
+
+
+// (no packing kernel; all processing uses 3 channels natively)
 
 
 // PostProcess Implementation
@@ -367,8 +370,8 @@ struct PostProcessImpl : public PostProcess {
         // Initialize buffers with correct size from the start
         const auto buffer_opts = torch::TensorOptions().dtype(torch::kFloat32).device(device);
 
-        buffer1_ = torch::empty({height, width, 4}, buffer_opts);
-        buffer2_ = torch::empty({height, width, 4}, buffer_opts);
+        buffer1_ = torch::empty({height, width, 3}, buffer_opts);
+        buffer2_ = torch::empty({height, width, 3}, buffer_opts);
         reduce_buffer_ = torch::empty({grid_.x * grid_.y, 2}, buffer_opts);
     }
 
@@ -379,8 +382,8 @@ struct PostProcessImpl : public PostProcess {
         // Input validation
         TORCH_CHECK(input.device().is_cuda(), "Input tensor must be on CUDA device");
         TORCH_CHECK(input.dtype() == torch::kFloat32, "Input tensor must be float32");
-        TORCH_CHECK(input.dim() == 3, "Input tensor must be 3D (H, W, 4)");
-        TORCH_CHECK(input.size(2) == 4, "Input must have 4 channels (RGBA)");
+        TORCH_CHECK(input.dim() == 3, "Input tensor must be 3D (H, W, 3)");
+        TORCH_CHECK(input.size(2) == 3, "Input must have 3 channels (RGB)");
 
         // Check dimensions match expected size
         TORCH_CHECK(input.size(0) == height_ && input.size(1) == width_, "Input size ", input.size(0), "x", input.size(1), " does not match expected ", height_, "x", width_);
@@ -390,9 +393,9 @@ struct PostProcessImpl : public PostProcess {
         buffer1_.copy_(contiguous_input);
 
         // Initialize local buffer pointers
-        float4 *buffers[2] = {
-            reinterpret_cast<float4*>(buffer1_.data_ptr<float>()),
-            reinterpret_cast<float4*>(buffer2_.data_ptr<float>())
+        float3 *buffers[2] = {
+            reinterpret_cast<float3*>(buffer1_.data_ptr<float>()),
+            reinterpret_cast<float3*>(buffer2_.data_ptr<float>())
         };
 
         bool current = false;
@@ -403,7 +406,7 @@ struct PostProcessImpl : public PostProcess {
         // Use pre-calculated CUDA dimensions
 
         // Color smoothing (multiple passes using ping-pong buffers)
-        const int smoothing_shared_size = (block_.x + 2) * (block_.y + 2) * sizeof(float4);
+        const int smoothing_shared_size = (block_.x + 2) * (block_.y + 2) * sizeof(float3);
 
         for(int pass = 0; pass < color_smoothing_passes_; pass++) {
             color_smoothing_kernel<<<grid_, block_, smoothing_shared_size, stream>>>(
@@ -453,7 +456,7 @@ struct PostProcessImpl : public PostProcess {
             current = not current;
         }
 
-        return (current ? buffer1_ : buffer2_).clone();
+        return (current ? buffer2_ : buffer1_).clone();
     }
 };
 

@@ -1,5 +1,6 @@
 #include "demosaic.h"
 #include "laplacian.h"
+#include "bilateral.h"
 #include "color_conversions.h"
 
 #include <ATen/ATen.h>
@@ -23,6 +24,8 @@ std::shared_ptr<Laplacian> create_laplacian(torch::Device device,
   int num_gamma, 
   float sigma, float shadows, float highlights, float clarity);
 
+std::shared_ptr<Bilateral> create_bilateral(torch::Device device,
+  int width, int height, float sigma_s, float sigma_r, float detail);
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 
@@ -68,6 +71,19 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         .def("set_shadows", &Laplacian::set_shadows, "Set shadows parameter")
         .def("set_highlights", &Laplacian::set_highlights, "Set highlights parameter")
         .def("set_clarity", &Laplacian::set_clarity, "Set clarity parameter");
+
+
+    py::class_<Bilateral, std::shared_ptr<Bilateral>>(m, "Bilateral")
+        .def(py::init(&create_bilateral), "Create Bilateral grid algorithm",
+             py::arg("device"),
+             py::arg("width"), py::arg("height"),
+             py::arg("sigma_s") = 8.0f, py::arg("sigma_r") = 0.1f, py::arg("detail") = 0.0f)
+        .def("process", &Bilateral::process, "Process luminance with bilateral grid",
+             py::arg("luminance"))
+        .def("get_parameters", &Bilateral::get_parameters, "Get current parameters")
+        .def("set_sigma_s", &Bilateral::set_sigma_s, "Set spatial sigma")
+        .def("set_sigma_r", &Bilateral::set_sigma_r, "Set range sigma")
+        .def("set_detail", &Bilateral::set_detail, "Set detail strength");
 
 
     // Color conversion functions

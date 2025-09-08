@@ -104,7 +104,19 @@ __global__ void pre_median_kernel(
         for(int ii = i + 1; ii < 9; ii++)
             if(med[i] > med[ii]) swap_floats(med[i], med[ii]);
 
-    float color = (c & 1) ? (cnt == 1 ? med[4] - 64.0f : med[(cnt - 1) / 2]) : centered_median[0];
+    const float center = centered_median[0];
+    float color;
+    if(c & 1)
+    {
+        const float target = (cnt == 1) ? (med[4] - 64.0f) : med[(cnt - 1) / 2];
+        const float delta = target - center;
+        const float clamped = fminf(fmaxf(delta, -threshold), threshold);
+        color = center + clamped;
+    }
+    else
+    {
+        color = center;
+    }
 
     output[y * width + x] = fmaxf(color, 0.0f);
 }
@@ -116,7 +128,7 @@ __global__ void pre_median_kernel(
  */
 __global__ void ppg_demosaic_green_kernel(
     float* input,
-    float4* output,
+    float3* output,
     int width,
     int height,
     uint32_t filters
@@ -168,7 +180,7 @@ __global__ void ppg_demosaic_green_kernel(
     const int row = y;
     const int col = x;
     const int c = fc(row, col, filters);
-    float4 color = make_float4(0.0f, 0.0f, 0.0f, 1.0f); // output color
+    float3 color = make_float3(0.0f, 0.0f, 0.0f); // output color
 
     const float pc = centered_green[0];
 
@@ -217,7 +229,7 @@ __global__ void ppg_demosaic_green_kernel(
             color.y = fmaxf(fminf(guessx*0.25f, M), m);
         }
     }
-    output[y * width + x] = make_float4(fmaxf(color.x, 0.0f), fmaxf(color.y, 0.0f), fmaxf(color.z, 0.0f), 1.0f);
+    output[y * width + x] = make_float3(fmaxf(color.x, 0.0f), fmaxf(color.y, 0.0f), fmaxf(color.z, 0.0f));
 }
 
 /**
@@ -225,13 +237,13 @@ __global__ void ppg_demosaic_green_kernel(
  * in (float4) -> out (float4)
  */
 __global__ void ppg_demosaic_redblue_kernel(
-    float4* input,
-    float4* output,
+    float3* input,
+    float3* output,
     int width,
     int height,
     uint32_t filters
 ) {
-    extern __shared__ float4 redblue_buffer[];
+    extern __shared__ float3 redblue_buffer[];
     // image in contains full green and sparse r b
     const int x = blockIdx.x * blockDim.x + threadIdx.x;
     const int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -264,11 +276,11 @@ __global__ void ppg_demosaic_redblue_kernel(
         if(bufidx >= maxbuf) continue;
         const int xx = xul + bufidx % stride;
         const int yy = yul + bufidx / stride;
-        redblue_buffer[bufidx] = (xx >= 0 && yy >= 0 && xx < width && yy < height) ? input[yy * width + xx] : make_float4(0.0f, 0.0f, 0.0f, 0.0f);
+        redblue_buffer[bufidx] = (xx >= 0 && yy >= 0 && xx < width && yy < height) ? input[yy * width + xx] : make_float3(0.0f, 0.0f, 0.0f);
     }
 
     // center buffer around current x,y-Pixel
-    float4* centered_redblue = redblue_buffer + (ylid + 1) * stride + xlid + 1;
+    float3* centered_redblue = redblue_buffer + (ylid + 1) * stride + xlid + 1;
 
     __syncthreads();
 
@@ -276,20 +288,20 @@ __global__ void ppg_demosaic_redblue_kernel(
     const int row = y;
     const int col = x;
     const int c = fc(row, col, filters);
-    float4 color = centered_redblue[0];
+    float3 color = centered_redblue[0];
     if(x == 0 || y == 0 || x == (width-1) || y == (height-1))
     {
-        output[y * width + x] = make_float4(fmaxf(color.x, 0.0f), fmaxf(color.y, 0.0f), fmaxf(color.z, 0.0f), 1.0f);
+        output[y * width + x] = make_float3(fmaxf(color.x, 0.0f), fmaxf(color.y, 0.0f), fmaxf(color.z, 0.0f));
         return;
     }
 
     if(c == 1 || c == 3)
     { // calculate red and blue for green pixels:
         // need 4-nbhood:
-        const float4 nt = centered_redblue[-stride];
-        const float4 nb = centered_redblue[ stride];
-        const float4 nl = centered_redblue[-1];
-        const float4 nr = centered_redblue[ 1];
+        const float3 nt = centered_redblue[-stride];
+        const float3 nb = centered_redblue[ stride];
+        const float3 nl = centered_redblue[-1];
+        const float3 nr = centered_redblue[ 1];
         if(fc(row, col+1, filters) == 0) // red nb in same row
         {
             color.z = (nt.z + nb.z + 2.0f*color.y - nt.y - nb.y)*0.5f;
@@ -304,10 +316,10 @@ __global__ void ppg_demosaic_redblue_kernel(
     else
     {
         // get 4-star-nbhood:
-        const float4 ntl = centered_redblue[-stride - 1];
-        const float4 ntr = centered_redblue[-stride + 1];
-        const float4 nbl = centered_redblue[ stride - 1];
-        const float4 nbr = centered_redblue[ stride + 1];
+        const float3 ntl = centered_redblue[-stride - 1];
+        const float3 ntr = centered_redblue[-stride + 1];
+        const float3 nbl = centered_redblue[ stride - 1];
+        const float3 nbr = centered_redblue[ stride + 1];
 
         if(c == 0)
         { // red pixel, fill blue:
@@ -330,7 +342,7 @@ __global__ void ppg_demosaic_redblue_kernel(
             else color.x = (guess1 + guess2)*0.25f;
         }
     }
-    output[y * width + x] = make_float4(fmaxf(color.x, 0.0f), fmaxf(color.y, 0.0f), fmaxf(color.z, 0.0f), 1.0f);
+    output[y * width + x] = make_float3(fmaxf(color.x, 0.0f), fmaxf(color.y, 0.0f), fmaxf(color.z, 0.0f));
 }
 
 /**
@@ -338,7 +350,7 @@ __global__ void ppg_demosaic_redblue_kernel(
  */
 __global__ void border_interpolate_kernel(
     float* input,
-    float4* output,
+    float3* output,
     int width,
     int height,
     uint32_t filters,
@@ -353,7 +365,7 @@ __global__ void border_interpolate_kernel(
 
     if(x >= border && x < width-border && y >= border && y < height-border) return;
 
-    float4 o;
+    float3 o;
     float sum[4] = { 0.0f };
     int count[4] = { 0 };
 
@@ -400,7 +412,7 @@ struct PPGImpl : public PPG {
 
         const auto buffer_opts = torch::TensorOptions().dtype(torch::kFloat32).device(device);
         temp_median_ = torch::zeros({height, width}, buffer_opts);
-        temp_buffer_ = torch::zeros({height, width, 4}, buffer_opts);
+        temp_buffer_ = torch::zeros({height, width, 3}, buffer_opts);
     }
 
 
@@ -421,7 +433,7 @@ struct PPGImpl : public PPG {
         dim3 grid((width_ + block.x - 1) / block.x, (height_ + block.y - 1) / block.y);
 
         const auto buffer_opts = torch::TensorOptions().dtype(torch::kFloat32).device(device_);
-        torch::Tensor output_buffer = torch::zeros({height_, width_, 4}, buffer_opts);
+        torch::Tensor output_buffer = torch::zeros({height_, width_, 3}, buffer_opts);
 
 
         const int median_stride = block.x + 2*2;
@@ -429,17 +441,18 @@ struct PPGImpl : public PPG {
         const int green_stride = block.x + 2*3;
         const int green_shared_size = green_stride * (block.y + 2*3) * sizeof(float);
         const int redblue_stride = block.x + 2;
-        const int redblue_shared_size = redblue_stride * (block.y + 2) * sizeof(float4);
+        const int redblue_shared_size = redblue_stride * (block.y + 2) * sizeof(float3);
 
         auto* processing_input = contiguous_input.data_ptr<float>();
 
-        float4* temp_ptr = reinterpret_cast<float4*>(temp_buffer_.data_ptr<float>());
+        float3* temp_ptr = reinterpret_cast<float3*>(temp_buffer_.data_ptr<float>());
 
         border_interpolate_kernel<<<grid, block, 0, stream>>>(
             contiguous_input.data_ptr<float>(), temp_ptr,
             width_, height_, filters_, 3);
 
         if (median_threshold_ > 0.0f) {
+
             pre_median_kernel<<<grid, block, median_shared_size, stream>>>(
                 contiguous_input.data_ptr<float>(), temp_median_.data_ptr<float>(),
                 width_, height_, filters_, median_threshold_);
@@ -453,7 +466,7 @@ struct PPGImpl : public PPG {
 
         ppg_demosaic_redblue_kernel<<<grid, block, redblue_shared_size, stream>>>(
             temp_ptr,
-            reinterpret_cast<float4*>(output_buffer.data_ptr<float>()),
+            reinterpret_cast<float3*>(output_buffer.data_ptr<float>()),
             width_, height_, filters_);
 
         return output_buffer;

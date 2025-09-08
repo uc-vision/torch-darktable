@@ -1,6 +1,7 @@
 
 
 import torch
+from typing import TYPE_CHECKING
 from enum import Enum
 from pathlib import Path
 from torch.utils import cpp_extension
@@ -47,6 +48,7 @@ def _load_cuda_extension(debug=False):
         str(source_dir / "rcd_kernels.cu"),
         str(source_dir / "postprocess_kernels.cu"),
         str(source_dir / "laplacian.cu"),
+        str(source_dir / "bilateral.cu"),
         str(source_dir / "color_conversions.cu")
     ]
     
@@ -60,15 +62,18 @@ def _load_cuda_extension(debug=False):
           if debug else ["-O3", "--expt-relaxed-constexpr", "--use_fast_math"]
     )
 
-# Load extension on import
-extension = _load_cuda_extension()
+# Load extension on import, with static types for type checkers
+if TYPE_CHECKING:
+    from . import torch_darktable_extension as extension  # type: ignore
+else:
+    extension = _load_cuda_extension()
 
     
 def ppg_demosaic(
               device: torch.device,
               image_size: tuple[int, int],
               bayer_pattern: BayerPattern,
-              median_threshold: float | None = None) -> torch.Tensor:
+              median_threshold: float | None = None) -> extension.PPG:
     """
     Create a PPG demosaic algorithm object.    
     Args:
@@ -91,7 +96,7 @@ def rcd_demosaic(
               image_size: tuple[int, int],
               bayer_pattern: BayerPattern,
               input_scale: float = 1.0,
-              output_scale: float = 1.0) -> torch.Tensor:
+              output_scale: float = 1.0) -> extension.RCD:
     """
     Create a RCD demosaic algorithm object.
     
@@ -115,10 +120,10 @@ def postprocess_demosaic(
               device: torch.device,
               image_size: tuple[int, int],
               bayer_pattern: BayerPattern,
-              color_smoothing_passes: int = 0,
+              color_smoothing_passes: int = 1,
               green_eq_local: bool = False,
               green_eq_global: bool = False,
-              green_eq_threshold: float = 0.04) -> torch.Tensor:
+              green_eq_threshold: float = 0.04) -> extension.PostProcess:
     """
     Create a post-process demosaic algorithm object.
 
@@ -144,7 +149,7 @@ def postprocess_demosaic(
 def create_laplacian(
     device: torch.device,
     image_size: tuple[int, int],
-    params: LaplacianParams | None = None):
+    params: LaplacianParams | None = None) -> extension.Laplacian:
     """
     Create a reusable Laplacian filter for local tone mapping.
 
@@ -209,6 +214,29 @@ def local_laplacian_rgb(
 compute_luminance = extension.compute_luminance
 modify_luminance = extension.modify_luminance
 
+
+def create_bilateral(
+    device: torch.device,
+    image_size: tuple[int, int],
+    sigma_s: float = 8.0,
+    sigma_r: float = 0.1,
+    detail: float = 0.0,
+):
+    return extension.Bilateral(device, image_size[0], image_size[1], sigma_s, sigma_r, detail)
+
+
+def bilateral_rgb(
+    bilateral: "extension.Bilateral",
+    image: torch.Tensor,
+    ) -> torch.Tensor:
+    assert image.dim() == 3 and image.size(2) == 3, "Input must be 3D tensor (H, W, 3)"
+    assert image.device.type == 'cuda', "Input must be on CUDA device"
+    assert image.dtype == torch.float32, "Input must be float32 dtype"
+
+    L = extension.compute_luminance(image).contiguous()
+    Lp = bilateral.process(L)
+    return extension.modify_luminance(image, Lp)
+
 rgb_to_lab = extension.rgb_to_lab
 lab_to_rgb = extension.lab_to_rgb
 
@@ -221,6 +249,7 @@ xyz_to_rgb = extension.xyz_to_rgb
 __all__ = [
     "BayerPattern", "LaplacianParams",
     "create_laplacian", "local_laplacian_rgb",
+    "create_bilateral", "bilateral_rgb",
     "compute_luminance", "modify_luminance",
     "rgb_to_lab", "lab_to_rgb",
     "rgb_to_xyz", "xyz_to_lab", "lab_to_xyz", "xyz_to_rgb"
