@@ -16,33 +16,38 @@
     along with darktable.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+
 #include <cuda_runtime.h>
 #include <cuda_texture_types.h>
+#include <cuda_fp16.h>
 #include <torch/torch.h>
 #include <ATen/ATen.h>
 #include <c10/cuda/CUDAStream.h>
 #include <stdexcept>
 #include "laplacian.h"
 #include "device_math.h"
+#include "cuda_utils.h"
+
+
+// #define USE_CUDA_TIMER
+#ifdef USE_CUDA_TIMER
+    using Timer = CudaTimer;
+#else
+    using Timer = NullTimer;
+#endif
+
+
+
 
 // Device arrays for gamma pointer arrays
-
 constexpr int max_gamma = 8;
-__device__ float* d_gamma_level0[max_gamma];
-__device__ float* d_gamma_level1[max_gamma];
+__device__ half_t* d_gamma_level0[max_gamma];
+__device__ half_t* d_gamma_level1[max_gamma];
 
-// CUDA error checking macros
-#define CUDA_CHECK(call) do { \
-    cudaError_t err = call; \
-    if (err != cudaSuccess) { \
-        throw std::runtime_error(std::string("CUDA error: ") + cudaGetErrorString(err)); \
-    } \
-} while(0)
+
 
 // Helper function for downsampling
 inline int dl(int x, int level) { return (x + (1 << level) - 1) >> level; }
-
-
 
 
 __device__ int2 clamp_boundary(int2 pos, int2 size) {
@@ -59,16 +64,6 @@ __device__ int2 clamp_boundary(int2 pos, int2 size) {
     return pos;
 }
 
-// OpenCL-style wrapper for texture reading (single channel)
-__device__ float read_imagef(float* data, int2 coord, int2 size) {
-    return data[coord.y * size.x + coord.x];
-}
-
-
-// OpenCL-style wrapper for image writing (single channel)
-__device__ void write_imagef(float* output, int2 coord, int2 size, float value) {
-    output[coord.y * size.x + coord.x] = value;
-}
 
 __global__ void pad_input(
     float* input,
@@ -91,68 +86,66 @@ __global__ void pad_input(
     write_imagef(padded, pos, padded_size, pixel_val);
 }
 
-__device__ float expand_gaussian(
-    float* coarse,
+// Pad input directly to fp16 output
+__global__ void pad_input_half(
+    float* input,
+    half_t* padded,
+    const int2 input_size,                  // dimensions of input
+    const int max_supp,            // size of border
+    const int2 padded_size)                 // padded dimensions
+{
+    const int2 pos = get_thread_pos();
+    int2 c = pos - max_supp;
+
+    if(pos.x >= padded_size.x || pos.y >= padded_size.y) return;
+    // fill boundary with max_supp px:
+    if(c.x >= input_size.x) c.x = input_size.x-1;
+    if(c.y >= input_size.y) c.y = input_size.y-1;
+    if(c.x < 0) c.x = 0;
+    if(c.y < 0) c.y = 0;
+
+    float_t pixel_val = read_imagef(input, c, input_size);
+    write_imagef_half(padded, pos, padded_size, pixel_val);
+}
+
+__device__ float_t expand_gaussian(
+    half_t* coarse,
     const int2 pos,
     const int2 fine_size,
     const int2 coarse_size)
 {
-    float c = 0.0f;
-    constexpr float w[5] = {1.0f/16.0f, 4.0f/16.0f, 6.0f/16.0f, 4.0f/16.0f, 1.0f/16.0f};
+    constexpr float_t w[5] = {1.0f/16.0f, 4.0f/16.0f, 6.0f/16.0f, 4.0f/16.0f, 1.0f/16.0f};
     const int2 coarse_pos = pos / 2;
     
-    switch((pos.x&1) + 2*(pos.y&1))
-    {
-        case 0: // both are even, 3x3 stencil
-            #pragma unroll
-            for(int i=-1;i<=1;i++) {
-              #pragma unroll
-              for(int j=-1;j<=1;j++) {
-                float pixel = read_imagef(coarse, coarse_pos + make_int2(i, j), coarse_size);
-                c += pixel*w[2*j+2]*w[2*i+2];
-              }
-            }
-            break;
-        case 1: // i is odd, 2x3 stencil
-            #pragma unroll
-            for(int i=0;i<=1;i++) {
-              #pragma unroll
-              for(int j=-1;j<=1;j++) {
-                float pixel = read_imagef(coarse, coarse_pos + make_int2(i, j), coarse_size);
-                c += pixel*w[2*j+2]*w[2*i+1];
-              }
-            }
-            break;
-        case 2: // j is odd, 3x2 stencil
-           #pragma unroll
-            for(int i=-1;i<=1;i++) {
-              #pragma unroll
-              for(int j=0;j<=1;j++) {
-                float pixel = read_imagef(coarse, coarse_pos + make_int2(i, j), coarse_size);
-                c += pixel*w[2*j+1]*w[2*i+2];
-              }
-            }
-            break;
-        default: // case 3: // both are odd, 2x2 stencil
-            #pragma unroll
-            for(int i=0;i<=1;i++) {
-              #pragma unroll
-              for(int j=0;j<=1;j++) {
-                float pixel = read_imagef(coarse, coarse_pos + make_int2(i, j), coarse_size);
-                c += pixel*w[2*j+1]*w[2*i+1];
-              }
-            }
-            break;  
+    const int x_odd = pos.x & 1;
+    const int y_odd = pos.y & 1;
+    
+    const int i_start = x_odd ? 0 : -1;
+    const int i_end = x_odd ? 1 : 1;
+    const int j_start = y_odd ? 0 : -1; 
+    const int j_end = y_odd ? 1 : 1;
+    
+    float_t c = 0.0f;
+    #pragma unroll
+    for(int i = i_start; i <= i_end; i++) {
+        #pragma unroll
+        for(int j = j_start; j <= j_end; j++) {
+            int2 access_pos = coarse_pos + make_int2(i, j);
+            float_t pixel = read_imagef_half(coarse, access_pos, coarse_size);
+            const int wi = x_odd ? (2*i+1) : (2*i+2);
+            const int wj = y_odd ? (2*j+1) : (2*j+2);
+            c += pixel * w[wi] * w[wj];
+        }
     }
     return 4.0f * c;
 }
 
-
+// Gauss reduce from fp32 input to fp16 output
 __global__ void
 gauss_reduce(
-    float* input,                   // fine input buffer
-    float* coarse,                  // coarse scale, blurred input buf
-    const int2 coarse_size,                   // coarse res (also run this kernel on coarse res only)
+    float* input,                   // fine input buffer (fp32)
+    half_t* coarse,                 // coarse scale, blurred output buf (fp16)
+    const int2 coarse_size,         // coarse res
     const int2 input_size)
 {
     const int2 pos = get_thread_pos();
@@ -166,8 +159,8 @@ gauss_reduce(
     if(c.y <= 0) c.y = 1;
 
     // blur, store only coarse res
-    float pixel_val = 0.0f;
-    constexpr float w[5] = {1.0f/16.0f, 4.0f/16.0f, 6.0f/16.0f, 4.0f/16.0f, 1.0f/16.0f};
+    float_t pixel_val = 0.0f;
+    constexpr float_t w[5] = {1.0f/16.0f, 4.0f/16.0f, 6.0f/16.0f, 4.0f/16.0f, 1.0f/16.0f};
     // direct 5x5 stencil only on required pixels:
     #pragma unroll
     for(int j=-2;j<=2;j++) {
@@ -177,26 +170,59 @@ gauss_reduce(
       }
     }
 
-    write_imagef(coarse, pos, coarse_size, pixel_val);
+    write_imagef_half(coarse, pos, coarse_size, pixel_val);
 }
 
-__device__ inline float laplacian(
-    float* tex_coarse,  // coarse res gaussian
-    float* tex_fine,    // fine res gaussian
+// Gauss reduce from fp16 input to fp16 output (for pyramid levels > 1)
+__global__ void
+gauss_reduce_half(
+    half_t* input,                  // fine input buffer (fp16)
+    half_t* coarse,                 // coarse scale, blurred output buf (fp16)
+    const int2 coarse_size,         // coarse res
+    const int2 input_size)
+{
+    const int2 pos = get_thread_pos();
+    int2 c = pos;
+
+    if(pos.x >= coarse_size.x || pos.y >= coarse_size.y) return;
+    // fill boundary with 1 px:
+    if(pos.x >= coarse_size.x-1) c.x = coarse_size.x-2;
+    if(pos.y >= coarse_size.y-1) c.y = coarse_size.y-2;
+    if(c.x <= 0) c.x = 1;
+    if(c.y <= 0) c.y = 1;
+
+    // blur, store only coarse res
+    float_t pixel_val = 0.0f;
+    constexpr float_t w[5] = {1.0f/16.0f, 4.0f/16.0f, 6.0f/16.0f, 4.0f/16.0f, 1.0f/16.0f};
+    // direct 5x5 stencil only on required pixels:
+    #pragma unroll
+    for(int j=-2;j<=2;j++) {
+      #pragma unroll
+      for(int i=-2;i<=2;i++) {
+        pixel_val += read_imagef_half(input, 2*c + make_int2(i, j), input_size) * w[i+2] * w[j+2];
+      }
+    }
+
+    write_imagef_half(coarse, pos, coarse_size, pixel_val);
+}
+
+__device__ inline float_t laplacian(
+    half_t* tex_coarse,  // coarse res gaussian (fp16)
+    half_t* tex_fine,    // fine res gaussian (fp16)
     const int2 pos,                     // fine index
     const int2 clamped_pos,                    // clamped fine index
     const int2 fine_size,                    // fine size
     const int2 coarse_size)             // coarse size
 {
-    const float c = expand_gaussian(tex_coarse, clamped_pos, fine_size, coarse_size);
-    return read_imagef(tex_fine, pos, fine_size) - c;
+    const float_t c = expand_gaussian(tex_coarse, clamped_pos, fine_size, coarse_size);
+    return read_imagef_half(tex_fine, pos, fine_size) - c;
 }
 
 template<int num_gamma>
 __global__ void laplacian_assemble(
-    float* tex_input,    // original input buffer, gauss at current fine pyramid level
-    float* tex_output1,  // state of reconstruction, coarse output buffer
-    float* output0,      // reconstruction, one level finer, run kernel on this dimension
+    half_t* tex_input,    // original input buffer, gauss at current fine pyramid level
+    half_t* tex_output1,  // state of reconstruction, coarse output buffer
+    half_t* output0,      // reconstruction, one level finer, run kernel on this dimension
     const int2 fine_size)       // width and height of the fine buffers (l0)
 {    
     const int2 pos = get_thread_pos();
@@ -207,9 +233,9 @@ __global__ void laplacian_assemble(
     const int2 clamped_pos = clamp_boundary(pos, fine_size);
     const int2 coarse_size = make_int2((fine_size.x-1)/2+1, (fine_size.y-1)/2+1);
     
-    float pixel_val = expand_gaussian(tex_output1, clamped_pos, fine_size, coarse_size);
+    float_t pixel_val = expand_gaussian(tex_output1, clamped_pos, fine_size, coarse_size);
 
-    const float v = read_imagef(tex_input, pos, fine_size);
+    const float_t v = read_imagef_half(tex_input, pos, fine_size);
     int hi = 1;
     // what we mean is this:
     // for(;hi<num_gamma-1 && gamma[hi] <= v;hi++);
@@ -218,11 +244,23 @@ __global__ void laplacian_assemble(
     // const float a = fminf(fmaxf((v - gamma[lo])/(gamma[hi]-gamma[lo]), 0.0f), 1.0f);
     const float a = fminf(fmaxf(v*num_gamma - ((float)lo+.5f), 0.0f), 1.0f);
     
-    float l0 = laplacian(d_gamma_level1[lo], d_gamma_level0[lo], pos, clamped_pos, fine_size, coarse_size);
-    float l1 = laplacian(d_gamma_level1[lo+1], d_gamma_level0[lo+1], pos, clamped_pos, fine_size, coarse_size);
+    float_t l0 = laplacian(d_gamma_level1[lo], d_gamma_level0[lo], pos, clamped_pos, fine_size, coarse_size);
+    float_t l1 = laplacian(d_gamma_level1[lo+1], d_gamma_level0[lo+1], pos, clamped_pos, fine_size, coarse_size);
 
     pixel_val += l0 * (1.0f-a) + l1 * a;
-    write_imagef(output0, pos, fine_size, pixel_val);
+    write_imagef_half(output0, pos, fine_size, pixel_val);
+}
+
+// Fast exp approximation for range [-8, 0] (good for Gaussian-like terms)
+__device__ inline float fast_expf(float x) {
+    // Clamp to safe range
+    x = fmaxf(x, -8.0f);
+    
+    // Use polynomial approximation: exp(x) ≈ (1 + x/8)^8 for x in [-8,0]
+    const float a = 1.0f + x * 0.125f; // x/8
+    const float a2 = a * a;
+    const float a4 = a2 * a2;
+    return a4 * a4; // a^8
 }
 
 __device__ float curve(
@@ -233,6 +271,7 @@ __device__ float curve(
     const float highlights,
     const float clarity)
 {
+
     const float c = x-g;
     float val;
     const float ssigma = c > 0.0f ? sigma : - sigma;
@@ -245,11 +284,12 @@ __device__ float curve(
         const float mt = 1.0f-t;
         val = g + ssigma * 2.0f*mt*t + t2*(ssigma + ssigma*shadhi);
     }
-    // midtone local contrast
-    val += clarity * c * expf(-c*c/(2.0f*sigma*sigma/3.0f));
+    const float exp_arg = -c*c/(2.0f*sigma*sigma/3.0f);
+    val += clarity * c * expf(exp_arg);
     return val;
 }
 
+// Process curve to fp32 output (for level 0)
 __global__ void
 process_curve(
     float* tex_input,
@@ -264,9 +304,55 @@ process_curve(
     const int2 pos = get_thread_pos();
     if(pos.x >= size.x || pos.y >= size.y) return;
 
-    float pixel_val = read_imagef(tex_input, pos, size);
+    float_t pixel_val = read_imagef(tex_input, pos, size);
     pixel_val = curve(pixel_val, g, sigma, shadows, highlights, clarity);
     write_imagef(output, pos, size, pixel_val);
+}
+
+// Process curve from fp16 input to fp16 output
+__global__ void
+process_curve_half(
+    half_t* tex_input,
+    half_t* output,
+    const float g,
+    const float sigma,
+    const float shadows,
+    const float highlights,
+    const float clarity,
+    const int2 size)
+{
+    const int2 pos = get_thread_pos();
+    if(pos.x >= size.x || pos.y >= size.y) return;
+
+    float_t pixel_val = read_imagef_half(tex_input, pos, size);
+    pixel_val = curve(pixel_val, g, sigma, shadows, highlights, clarity);
+    write_imagef_half(output, pos, size, pixel_val);
+}
+
+// Multi-gamma curve processing to fp16
+template<int num_gamma>
+__global__ void
+process_curves_batch(
+    float* tex_input,
+    half_t** outputs,            // Array of fp16 output pointers 
+    const float sigma,
+    const float shadows,
+    const float highlights,
+    const float clarity,
+    const int2 size)
+{
+    const int2 pos = get_thread_pos();
+    if(pos.x >= size.x || pos.y >= size.y) return;
+
+    float_t input_val = read_imagef(tex_input, pos, size);
+    
+    // Process all gamma levels at once (compute in fp32, store as fp16)
+    #pragma unroll
+    for(int k = 0; k < num_gamma; k++) {
+        const float_t g = (k + 0.5f) / (float_t)num_gamma;
+        float_t curved_val = curve(input_val, g, sigma, shadows, highlights, clarity);
+        write_imagef_half(outputs[k], pos, size, curved_val);
+    }
 }
 
 __global__ void write_back(
@@ -280,6 +366,20 @@ __global__ void write_back(
     if(pos.x >= output_size.x || pos.y >= output_size.y) return;
 
     float processed_val = read_imagef(tex_processed, pos + max_supp, processed_size);
+    write_imagef(output, pos, output_size, processed_val);
+}
+
+__global__ void write_back_half(
+    half_t* tex_processed,
+    float* output,
+    const int max_supp,
+    const int2 output_size,
+    const int2 processed_size)
+{
+    const int2 pos = get_thread_pos();
+    if(pos.x >= output_size.x || pos.y >= output_size.y) return;
+
+    float_t processed_val = read_imagef_half(tex_processed, pos + max_supp, processed_size);
     write_imagef(output, pos, output_size, processed_val);
 }
 
@@ -302,6 +402,7 @@ struct LaplacianImpl : public Laplacian
     std::vector<torch::Tensor> dev_padded;
     std::vector<torch::Tensor> dev_output;
     std::vector<std::vector<torch::Tensor>> dev_processed;
+    
 
     // Constructor
     LaplacianImpl(torch::Device device, const int width, const int height, const float sigma,
@@ -324,20 +425,30 @@ struct LaplacianImpl : public Laplacian
             const int level_width = dl(bwidth, l);
             const int level_height = dl(bheight, l);
 
-            dev_padded.push_back(torch::empty({level_height, level_width}, torch::device(torch::kCUDA).dtype(torch::kFloat32)));
-            dev_output.push_back(torch::empty({level_height, level_width}, torch::device(torch::kCUDA).dtype(torch::kFloat32)));
+            // All levels use fp16 for consistent memory savings
+            dev_padded.push_back(torch::empty({level_height, level_width}, torch::device(torch::kCUDA).dtype(torch::kFloat16)));
+            dev_output.push_back(torch::empty({level_height, level_width}, torch::device(torch::kCUDA).dtype(torch::kFloat16)));
 
             for(int k = 0; k < num_gamma; k++) {
-                auto tensor = torch::empty({level_height, level_width}, torch::device(torch::kCUDA).dtype(torch::kFloat32));
+                // All processed levels use fp16 for memory savings
+                auto tensor = torch::empty({level_height, level_width}, torch::device(torch::kCUDA).dtype(torch::kFloat16));
                 dev_processed[k].push_back(tensor);
             }
         }
     }
 
-    // Helper functions to get buffer pointers
-    float* processed_ptr(int level, int k) { return dev_processed[k][level].data_ptr<float>(); }
-    float* padded_ptr(int level) { return dev_padded[level].data_ptr<float>(); }
-    float* output_ptr(int level) { return dev_output[level].data_ptr<float>(); }
+    // Helper functions - all levels are fp16
+    half_t* processed_ptr(int level, int k) { 
+          return dev_processed[k][level].data_ptr<half_t>(); 
+    }
+    
+    half_t* padded_ptr(int level) { 
+        return dev_padded[level].data_ptr<half_t>(); 
+    }
+    
+    half_t* output_ptr(int level) { 
+      return dev_output[level].data_ptr<half_t>();  
+    }
 
     // Processing function
     torch::Tensor process(const torch::Tensor& input) override
@@ -350,20 +461,25 @@ struct LaplacianImpl : public Laplacian
         TORCH_CHECK(input.is_cuda(), "Input tensor must be on CUDA device");
 
         auto stream = c10::cuda::getCurrentCUDAStream();
-        CUDA_CHECK(cudaStreamSynchronize(stream.stream()));
 
         // Create output tensor
         auto output = torch::empty({height, width}, torch::device(torch::kCUDA).dtype(torch::kFloat32));
         
-        // Execute processing steps with error checking
+        // Execute processing steps with timing
+        
+        Timer timer(stream.stream());
+        timer.record("pad_input_step");
         pad_input_step(input);
+        timer.record("build_gaussian_pyramid_step");
         build_gaussian_pyramid_step();
+        timer.record("process_gamma_curves_step");
         process_gamma_curves_step();
+        timer.record("assemble_pyramid_step");
         assemble_pyramid_step();
+        timer.record("write_back_step");
         write_back_step(output);
-
-        // Final synchronization
-        CUDA_CHECK(cudaStreamSynchronize(stream.stream()));
+        timer.print_timings();
+    
         
         return output;
     }
@@ -373,10 +489,12 @@ struct LaplacianImpl : public Laplacian
     {
         auto stream = c10::cuda::getCurrentCUDAStream();
         constexpr int block_size = 16;
+        
         dim3 block(block_size, block_size);
         dim3 grid((bwidth + block_size - 1) / block_size, (bheight + block_size - 1) / block_size);
         
-        pad_input<<<grid, block, 0, stream.stream()>>>(
+        // Pad directly to fp16 storage
+        pad_input_half<<<grid, block, 0, stream.stream()>>>(
             input.data_ptr<float>(), padded_ptr(0),
             make_int2(width, height), max_supp,
             make_int2(bwidth, bheight));
@@ -386,7 +504,7 @@ struct LaplacianImpl : public Laplacian
     {
         auto stream = c10::cuda::getCurrentCUDAStream();
         constexpr int block_size = 16;
-        
+
         for(int l=1; l<num_levels; l++) {
             const int level_width = dl(bwidth, l);
             const int level_height = dl(bheight, l);
@@ -394,7 +512,8 @@ struct LaplacianImpl : public Laplacian
             dim3 block(block_size, block_size);
             dim3 grid((level_width + block_size - 1) / block_size, (level_height + block_size - 1) / block_size);
             
-            gauss_reduce<<<grid, block, 0, stream.stream()>>>(
+            // All levels now use fp16 -> fp16 processing
+            gauss_reduce_half<<<grid, block, 0, stream.stream()>>>(
                 padded_ptr(l-1), 
                 (l == num_levels-1) ? output_ptr(l) : padded_ptr(l), 
                 make_int2(level_width, level_height), make_int2(dl(bwidth, l-1), dl(bheight, l-1)));
@@ -412,8 +531,9 @@ struct LaplacianImpl : public Laplacian
             dim3 block(block_size, block_size);
             dim3 grid((bwidth + block_size - 1) / block_size, (bheight + block_size - 1) / block_size);
             
-            process_curve<<<grid, block, 0, stream.stream()>>>(
-                padded_ptr(0), processed_ptr(0, k),
+            // Process curve directly: fp16 input -> fp16 output
+            process_curve_half<<<grid, block, 0, stream.stream()>>>(
+                padded_ptr(0), processed_ptr(0, k), 
                 g, sigma, shadows, highlights, clarity,
                 make_int2(bwidth, bheight));
 
@@ -425,7 +545,7 @@ struct LaplacianImpl : public Laplacian
                 dim3 block(block_size, block_size);
                 dim3 grid((level_width + block_size - 1) / block_size, (level_height + block_size - 1) / block_size);
                 
-                gauss_reduce<<<grid, block, 0, stream.stream()>>>(
+                gauss_reduce_half<<<grid, block, 0, stream.stream()>>>(
                     processed_ptr(l-1, k), processed_ptr(l, k), 
                     make_int2(level_width, level_height), make_int2(dl(bwidth, l-1), dl(bheight, l-1)));
             }
@@ -444,20 +564,21 @@ struct LaplacianImpl : public Laplacian
             dim3 block(block_size, block_size);
             dim3 grid((pw + block_size - 1) / block_size, (ph + block_size - 1) / block_size);
             
-            // Prepare host arrays
-            float* h_gamma_level0[max_gamma];
-            float* h_gamma_level1[max_gamma];
+            // Fill pointer arrays on host
+            std::vector<int64_t> h_ptrs0(num_gamma), h_ptrs1(num_gamma);
             for(int k = 0; k < num_gamma; k++) {
-                h_gamma_level0[k] = processed_ptr(l, k);
-                h_gamma_level1[k] = processed_ptr(l+1, k);
+                h_ptrs0[k] = reinterpret_cast<int64_t>(processed_ptr(l, k));
+                h_ptrs1[k] = reinterpret_cast<int64_t>(processed_ptr(l+1, k));
             }
             
-            // Copy to device symbols
-            CUDA_CHECK(cudaMemcpyToSymbol(d_gamma_level0, h_gamma_level0, sizeof(float*) * max_gamma));
-            CUDA_CHECK(cudaMemcpyToSymbol(d_gamma_level1, h_gamma_level1, sizeof(float*) * max_gamma));
+            // Copy directly to device symbols  
+            CUDA_CHECK(cudaMemcpyToSymbol(d_gamma_level0, h_ptrs0.data(), num_gamma * sizeof(half_t*)));
+            CUDA_CHECK(cudaMemcpyToSymbol(d_gamma_level1, h_ptrs1.data(), num_gamma * sizeof(half_t*)));
             
             laplacian_assemble<num_gamma><<<grid, block, 0, stream.stream()>>>(
-                padded_ptr(l), output_ptr(l+1), output_ptr(l),
+                padded_ptr(l), 
+                output_ptr(l+1),
+                output_ptr(l),
                 make_int2(pw, ph)); 
         }
     }
@@ -469,7 +590,7 @@ struct LaplacianImpl : public Laplacian
         dim3 final_block(block_size, block_size);
         dim3 final_grid((width + block_size - 1) / block_size, (height + block_size - 1) / block_size);
         
-        write_back<<<final_grid, final_block, 0, stream.stream()>>>(
+        write_back_half<<<final_grid, final_block, 0, stream.stream()>>>(
             output_ptr(0), output.data_ptr<float>(),
             max_supp, make_int2(width, height), make_int2(bwidth, bheight));
     }
@@ -510,12 +631,12 @@ std::shared_ptr<Laplacian> create_laplacian(
     float sigma, float shadows, float highlights, float clarity) {
 
     switch(num_gamma) {
-        case 4:
-            return std::make_shared<LaplacianImpl<4>>(device, width, height, sigma, shadows, highlights, clarity);
+        // case 4:
+        //     return std::make_shared<LaplacianImpl<4>>(device, width, height, sigma, shadows, highlights, clarity);
         case 6:
             return std::make_shared<LaplacianImpl<6>>(device, width, height, sigma, shadows, highlights, clarity);
-        case 8:
-            return std::make_shared<LaplacianImpl<8>>(device, width, height, sigma, shadows, highlights, clarity);
+        // case 8:
+        //     return std::make_shared<LaplacianImpl<8>>(device, width, height, sigma, shadows, highlights, clarity);
         default:
             throw std::runtime_error("Unsupported gamma count: " + std::to_string(num_gamma));
     }
