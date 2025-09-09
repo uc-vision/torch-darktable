@@ -88,7 +88,7 @@ def main():
                        help='Bayer pattern (default: RGGB)')
     parser.add_argument('--warmup-iters', type=int, default=5,
                        help='Number of warmup iterations (default: 5)')
-    parser.add_argument('--bench-iters', type=int, default=200,
+    parser.add_argument('--bench-iters', type=int, default=1000,
                        help='Number of benchmark iterations (default: 50)')
     
     args = parser.parse_args()

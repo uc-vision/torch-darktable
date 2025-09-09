@@ -455,7 +455,7 @@ struct PPGImpl : public PPG {
 
             pre_median_kernel<<<grid, block, median_shared_size, stream>>>(
                 contiguous_input.data_ptr<float>(), temp_median_.data_ptr<float>(),
-                width_, height_, filters_, median_threshold_);
+                width_, height_, filters_, median_threshold_ / 100.0f);
 
             processing_input = temp_median_.data_ptr<float>();
         }
