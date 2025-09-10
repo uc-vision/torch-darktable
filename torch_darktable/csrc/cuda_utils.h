@@ -5,12 +5,21 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <torch/extension.h>
+#include <ATen/ATen.h>
 
 // CUDA error checking macros
 #define CUDA_CHECK(call) do { \
     cudaError_t err = call; \
     if (err != cudaSuccess) { \
         throw std::runtime_error(std::string("CUDA error: ") + cudaGetErrorString(err)); \
+    } \
+} while(0)
+
+#define CUDA_CHECK_KERNEL() do { \
+    cudaError_t err = cudaGetLastError(); \
+    if (err != cudaSuccess) { \
+        throw std::runtime_error(std::string("CUDA kernel error: ") + cudaGetErrorString(err)); \
     } \
 } while(0)
 

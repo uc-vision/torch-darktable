@@ -3,23 +3,23 @@ from pathlib import Path
 from PIL import Image
 import numpy as np
 
-from torch_darktable import ppg_demosaic, rcd_demosaic, postprocess_demosaic, BayerPattern
+from torch_darktable import create_ppg, create_rcd, create_postprocess, BayerPattern
 from torch_darktable.utilities import load_image, rgb_to_bayer
 
 
 def create_debayer_algorithm(device, width, height, pattern, args):
     """Create debayer algorithm from args object (handles PPG, RCD, and postprocessing)."""
     if args.algorithm.lower() == "ppg":
-        return ppg_demosaic(device, (width, height), pattern, median_threshold=args.median_threshold)
+        return create_ppg(device, (width, height), pattern, median_threshold=args.median_threshold)
     elif args.algorithm.lower() == "rcd":
-        return rcd_demosaic(device, (width, height), pattern, input_scale=args.input_scale, output_scale=args.output_scale)
+        return create_rcd(device, (width, height), pattern, input_scale=args.input_scale, output_scale=args.output_scale)
     else:
         raise ValueError(f"Unknown algorithm: {args.algorithm}. Choose 'ppg' or 'rcd'")
 
 
 def create_postprocess_algorithm(device, width, height, pattern, args):
     """Create post-processing algorithm from args object."""
-    return postprocess_demosaic(device, (width, height), pattern, args.color_smoothing_passes,
+    return create_postprocess(device, (width, height), pattern, args.color_smoothing_passes,
                               args.green_eq_local, args.green_eq_global, args.green_eq_threshold)
 
 
@@ -76,7 +76,7 @@ def main():
                        help='Enable local green equilibration')
     parser.add_argument('--green_eq_global', action='store_true',
                        help='Enable global green equilibration')
-    parser.add_argument('--green_eq_threshold', type=float, default=0.0001,
+    parser.add_argument('--green_eq_threshold', type=float, default=0.01,
                        help='Green equilibration threshold')
     
     args = parser.parse_args()

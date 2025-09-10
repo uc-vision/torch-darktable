@@ -7,11 +7,13 @@
 struct Bilateral {
     virtual ~Bilateral() = default;
     virtual torch::Tensor process(const torch::Tensor &luminance) = 0;
-    virtual py::dict get_parameters() const = 0;
-
     virtual void set_sigma_s(float sigma_s) = 0;
     virtual void set_sigma_r(float sigma_r) = 0;
     virtual void set_detail(float detail) = 0;
+    // Read accessors (for concise property bindings)
+    virtual float get_sigma_s() const = 0;
+    virtual float get_sigma_r() const = 0;
+    virtual float get_detail() const = 0;
 };
 
 std::shared_ptr<Bilateral> create_bilateral(

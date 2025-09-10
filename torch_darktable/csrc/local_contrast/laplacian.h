@@ -13,13 +13,18 @@ constexpr int max_levels = 30;
 struct Laplacian {
     virtual ~Laplacian() = default;
     virtual torch::Tensor process(const torch::Tensor& input) = 0;
-    virtual py::dict get_parameters() const = 0;
     
     // Adjustable parameter setters
     virtual void set_sigma(float sigma) = 0;
     virtual void set_shadows(float shadows) = 0;
     virtual void set_highlights(float highlights) = 0;
     virtual void set_clarity(float clarity) = 0;
+
+    // Read accessors (for concise property bindings)
+    virtual float get_sigma() const = 0;
+    virtual float get_shadows() const = 0;
+    virtual float get_highlights() const = 0;
+    virtual float get_clarity() const = 0;
 };
 
 // Factory function for workspace creation (for reuse across multiple images)

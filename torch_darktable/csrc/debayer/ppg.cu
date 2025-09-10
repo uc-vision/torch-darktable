@@ -474,6 +474,9 @@ struct PPGImpl : public PPG {
 
     int get_width() const override { return width_; }
     int get_height() const override { return height_; }
+
+    void set_median_threshold(float threshold) override { median_threshold_ = threshold; }
+    float get_median_threshold() const override { return median_threshold_; }
 };
 
 std::shared_ptr<PPG> create_ppg(torch::Device device, int width, int height, uint32_t filters, 

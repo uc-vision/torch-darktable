@@ -5,8 +5,7 @@ from typing import Callable
 
 from torch_darktable import BayerPattern
 from torch_darktable.utilities import load_image, rgb_to_bayer
-from torch_darktable import ppg_demosaic, rcd_demosaic, postprocess_demosaic, create_laplacian, compute_luminance
-from torch_darktable import create_bilateral
+from torch_darktable import create_ppg, create_rcd, create_postprocess, create_laplacian, compute_luminance, create_bilateral
 
 
 def benchmark(name: str, func: Callable, *args, warmup_iters: int = 5, bench_iters: int = 50) -> float:
@@ -51,11 +50,10 @@ def run_benchmark(image_path: Path, pattern: BayerPattern, warmup_iters: int = 5
     print()
 
 
-    ppg_alg = ppg_demosaic(bayer_input.device, (width, height), pattern)
-    rcd_alg = rcd_demosaic(bayer_input.device, (width, height), pattern)
-    color_smooth_alg = postprocess_demosaic(bayer_input.device, (width, height), pattern, color_smoothing_passes=3)
-    green_eq_alg = postprocess_demosaic(bayer_input.device, (width, height), pattern,
-                                    green_eq_local=True, green_eq_global=True)
+    ppg_alg = create_ppg(bayer_input.device, (width, height), pattern)
+    rcd_alg = create_rcd(bayer_input.device, (width, height), pattern)
+    color_smooth_alg = create_postprocess(bayer_input.device, (width, height), pattern, color_smoothing_passes=3)
+    green_eq_alg = create_postprocess(bayer_input.device, (width, height), pattern, green_eq_local=True, green_eq_global=True)
 
     laplacian_alg = create_laplacian(bayer_input.device, (width, height))
     bilateral_alg = create_bilateral(bayer_input.device, (width, height), sigma_s=2.0, sigma_r=0.2, detail=0.2)

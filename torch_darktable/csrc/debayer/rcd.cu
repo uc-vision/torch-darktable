@@ -9,7 +9,7 @@
 #include <ATen/ATen.h>
 #include <c10/cuda/CUDAStream.h>
 #include <cstdint>
-#include "device_math.h"
+#include "../device_math.h"
 
 #include "demosaic.h"
 
@@ -672,6 +672,11 @@ struct RCDImpl : public RCD {
 
     int get_width() const override { return width_; }
     int get_height() const override { return height_; }
+
+    void set_input_scale(float scale) override { input_scale_ = scale; }
+    void set_output_scale(float scale) override { output_scale_ = scale; }
+    float get_input_scale() const override { return input_scale_; }
+    float get_output_scale() const override { return output_scale_; }
 };
 
 std::shared_ptr<RCD> create_rcd(torch::Device device, int width, int height, uint32_t filters, float input_scale, float output_scale) {

@@ -450,7 +450,7 @@ struct PostProcessImpl : public PostProcess {
 
             green_eq_local_kernel<<<grid_, block_, green_eq_shared_size, stream>>>(
                 buffers[current], buffers[!current],
-                width_, height_, filters_, green_eq_threshold_);
+                width_, height_, filters_, green_eq_threshold_ / 100.);
 
             // Swap buffer pointers (no data copy)
             current = not current;
@@ -458,6 +458,15 @@ struct PostProcessImpl : public PostProcess {
 
         return (current ? buffer2_ : buffer1_).clone();
     }
+
+    void set_color_smoothing_passes(int passes) override { color_smoothing_passes_ = passes; }
+    void set_green_eq_local(bool enabled) override { green_eq_local_ = enabled; }
+    void set_green_eq_global(bool enabled) override { green_eq_global_ = enabled; }
+    void set_green_eq_threshold(float threshold) override { green_eq_threshold_ = threshold; }
+    int get_color_smoothing_passes() const override { return color_smoothing_passes_; }
+    bool get_green_eq_local() const override { return green_eq_local_; }
+    bool get_green_eq_global() const override { return green_eq_global_; }
+    float get_green_eq_threshold() const override { return green_eq_threshold_; }
 };
 
 std::shared_ptr<PostProcess> create_postprocess(torch::Device device,

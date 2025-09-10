@@ -18,9 +18,10 @@ def reinhard(image: torch.Tensor, epsilon=1e-4, base_key=0.18, gamma=0.75) -> to
 def load_rgb_image(image_path: Path) -> torch.Tensor:
     if not image_path.exists():
         raise FileNotFoundError(f"Image not found: {image_path}")
-    img_array = cv2.imread(str(image_path), -1)
+    img_array = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
+    
     rgb_array = img_array.astype(np.float32)
-    rgb_array = rgb_array / max(np.max(rgb_array), 1.0)
+    rgb_array = rgb_array / max(float(np.max(rgb_array)), 1.0)
     return torch.from_numpy(rgb_array).cuda()
 
 
@@ -57,9 +58,9 @@ def test_bilateral(image_path: Path, args):
 def main():
     parser = argparse.ArgumentParser(description='Test bilateral grid filter on an image')
     parser.add_argument('image', type=Path, help='Input image path')
-    parser.add_argument('--sigma_s', type=float, default=8.0, help='Spatial sigma (pixels)')
+    parser.add_argument('--sigma_s', type=float, default=2.0, help='Spatial sigma (pixels)')
     parser.add_argument('--sigma_r', type=float, default=0.1, help='Range sigma (luminance, 0-1)')
-    parser.add_argument('--detail', type=float, default=0.0, help='Detail amount (0 no change, <0 smooth, >0 boost)')
+    parser.add_argument('--detail', type=float, default=0.2, help='Detail amount (0 no change, <0 smooth, >0 boost)')
     parser.add_argument('--tonemap', action='store_true', help='Tonemap the output image for display')
 
     args = parser.parse_args()

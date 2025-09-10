@@ -25,8 +25,8 @@
 #include <c10/cuda/CUDAStream.h>
 #include <stdexcept>
 #include "laplacian.h"
-#include "device_math.h"
-#include "cuda_utils.h"
+#include "../device_math.h"
+#include "../cuda_utils.h"
 
 
 // #define USE_CUDA_TIMER
@@ -419,22 +419,10 @@ struct LaplacianImpl : public Laplacian
 
         dev_processed.resize(num_gamma);
         
-        // Allocate buffers
-        for(int l = 0; l < num_levels; l++)
-        {
-            const int level_width = dl(bwidth, l);
-            const int level_height = dl(bheight, l);
-
-            // All levels use fp16 for consistent memory savings
-            dev_padded.push_back(torch::empty({level_height, level_width}, torch::device(torch::kCUDA).dtype(torch::kFloat16)));
-            dev_output.push_back(torch::empty({level_height, level_width}, torch::device(torch::kCUDA).dtype(torch::kFloat16)));
-
-            for(int k = 0; k < num_gamma; k++) {
-                // All processed levels use fp16 for memory savings
-                auto tensor = torch::empty({level_height, level_width}, torch::device(torch::kCUDA).dtype(torch::kFloat16));
-                dev_processed[k].push_back(tensor);
-            }
-        }
+        // Defer buffer allocation until first process() call
+        dev_padded.clear();
+        dev_output.clear();
+        for(int k = 0; k < num_gamma; k++) dev_processed[k].clear();
     }
 
     // Helper functions - all levels are fp16
@@ -505,6 +493,26 @@ struct LaplacianImpl : public Laplacian
         auto stream = c10::cuda::getCurrentCUDAStream();
         constexpr int block_size = 16;
 
+        // Lazy allocate if needed
+        if (dev_padded.empty()) {
+            for(int l = 0; l < num_levels; l++)
+            {
+                const int level_width = dl(bwidth, l);
+                const int level_height = dl(bheight, l);
+
+                dev_padded.push_back(torch::empty({level_height, level_width}, torch::device(torch::kCUDA).dtype(torch::kFloat16)));
+                dev_output.push_back(torch::empty({level_height, level_width}, torch::device(torch::kCUDA).dtype(torch::kFloat16)));
+
+                if (l == 0) {
+                    for(int k = 0; k < num_gamma; k++) dev_processed[k].clear();
+                }
+                for(int k = 0; k < num_gamma; k++) {
+                    auto tensor = torch::empty({level_height, level_width}, torch::device(torch::kCUDA).dtype(torch::kFloat16));
+                    dev_processed[k].push_back(tensor);
+                }
+            }
+        }
+        
         for(int l=1; l<num_levels; l++) {
             const int level_width = dl(bwidth, l);
             const int level_height = dl(bheight, l);
@@ -596,20 +604,14 @@ struct LaplacianImpl : public Laplacian
     }
     
     // Parameter inspection
-    py::dict get_parameters() const override {
-        py::dict params;
-        params["num_gamma"] = num_gamma;
-        params["width"] = width;
-        params["height"] = height;
-        params["sigma"] = sigma;
-        params["shadows"] = shadows;
-        params["highlights"] = highlights;
-        params["clarity"] = clarity;
-        params["num_levels"] = num_levels;
-        params["max_supp"] = max_supp;
-        return params;
-    }
     
+    
+    // Read accessors for properties
+    float get_sigma() const override { return sigma; }
+    float get_shadows() const override { return shadows; }
+    float get_highlights() const override { return highlights; }
+    float get_clarity() const override { return clarity; }
+
     // Adjustable parameter setters
     void set_sigma(float new_sigma) override { sigma = new_sigma; }
     void set_shadows(float new_shadows) override { shadows = new_shadows; }

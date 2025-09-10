@@ -1,9 +1,13 @@
-#include "demosaic.h"
-#include "laplacian.h"
-#include "bilateral.h"
+#include "debayer/demosaic.h"
+#include "local_contrast/laplacian.h"
+#include "local_contrast/bilateral.h"
 #include "color_conversions.h"
+#include "packed.h"
+#include "tonemap/tonemap.h"
 
 #include <ATen/ATen.h>
+
+ 
 
 
 // Forward declarations for implementations in kernel files
@@ -28,6 +32,8 @@ std::shared_ptr<Bilateral> create_bilateral(torch::Device device,
   int width, int height, float sigma_s, float sigma_r, float detail);
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+    // Minimal helper to reduce boilerplate for bulk setters
+ 
 
 
 
@@ -37,14 +43,17 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
              py::arg("device"), py::arg("width"), py::arg("height"),
              py::arg("filters"), py::arg("median_threshold") = 0.0f)
         .def("process", &PPG::process, "Process image with PPG algorithm",
-             py::arg("input"));
+             py::arg("input"))
+        .def_property("median_threshold", &PPG::get_median_threshold, &PPG::set_median_threshold, "Median threshold parameter");
 
     py::class_<RCD, std::shared_ptr<RCD>>(m, "RCD")
         .def(py::init(&create_rcd), "Create RCD demosaic",
              py::arg("device"), py::arg("width"), py::arg("height"),
              py::arg("filters"), py::arg("input_scale") = 1.0f, py::arg("output_scale") = 1.0f)
         .def("process", &RCD::process, "Process image with RCD algorithm",
-             py::arg("input"));
+             py::arg("input"))
+        .def_property("input_scale", &RCD::get_input_scale, &RCD::set_input_scale, "Input scaling")
+        .def_property("output_scale", &RCD::get_output_scale, &RCD::set_output_scale, "Output scaling");
 
     py::class_<PostProcess, std::shared_ptr<PostProcess>>(m, "PostProcess")
         .def(py::init(&create_postprocess), "Create post-process algorithm",
@@ -53,7 +62,11 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
              py::arg("green_eq_local") = false, py::arg("green_eq_global") = false,
              py::arg("green_eq_threshold") = 0.04f)
         .def("process", &PostProcess::process, "Process image with post-processing",
-             py::arg("input"));
+             py::arg("input"))
+        .def_property("color_smoothing_passes", &PostProcess::get_color_smoothing_passes, &PostProcess::set_color_smoothing_passes, "Number of color smoothing passes")
+        .def_property("green_eq_local", &PostProcess::get_green_eq_local, &PostProcess::set_green_eq_local, "Enable local green equilibration")
+        .def_property("green_eq_global", &PostProcess::get_green_eq_global, &PostProcess::set_green_eq_global, "Enable global green equilibration")
+        .def_property("green_eq_threshold", &PostProcess::get_green_eq_threshold, &PostProcess::set_green_eq_threshold, "Green equilibration threshold");
 
 
 
@@ -63,14 +76,13 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
              py::arg("width"), py::arg("height"),
              py::arg("num_gamma") = 6, 
              py::arg("sigma") = 0.2f,
-             py::arg("shadows") = 0.0f, py::arg("highlights") = 0.0f, py::arg("clarity") = 0.0f)
+             py::arg("shadows") = 1.0f, py::arg("highlights") = 1.0f, py::arg("clarity") = 0.0f)
         .def("process", &Laplacian::process, "Process image with Laplacian filter",
              py::arg("input"))
-        .def("get_parameters", &Laplacian::get_parameters, "Get current parameters")
-        .def("set_sigma", &Laplacian::set_sigma, "Set sigma parameter")
-        .def("set_shadows", &Laplacian::set_shadows, "Set shadows parameter")
-        .def("set_highlights", &Laplacian::set_highlights, "Set highlights parameter")
-        .def("set_clarity", &Laplacian::set_clarity, "Set clarity parameter");
+        .def_property("sigma", &Laplacian::get_sigma, &Laplacian::set_sigma, "Sigma parameter")
+        .def_property("shadows", &Laplacian::get_shadows, &Laplacian::set_shadows, "Shadows parameter")
+        .def_property("highlights", &Laplacian::get_highlights, &Laplacian::set_highlights, "Highlights parameter")
+        .def_property("clarity", &Laplacian::get_clarity, &Laplacian::set_clarity, "Clarity parameter");
 
 
     py::class_<Bilateral, std::shared_ptr<Bilateral>>(m, "Bilateral")
@@ -80,10 +92,11 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
              py::arg("sigma_s") = 8.0f, py::arg("sigma_r") = 0.1f, py::arg("detail") = 0.0f)
         .def("process", &Bilateral::process, "Process luminance with bilateral grid",
              py::arg("luminance"))
-        .def("get_parameters", &Bilateral::get_parameters, "Get current parameters")
-        .def("set_sigma_s", &Bilateral::set_sigma_s, "Set spatial sigma")
-        .def("set_sigma_r", &Bilateral::set_sigma_r, "Set range sigma")
-        .def("set_detail", &Bilateral::set_detail, "Set detail strength");
+        .def_property("sigma_s", &Bilateral::get_sigma_s, &Bilateral::set_sigma_s, "Spatial sigma")
+        .def_property("sigma_r", &Bilateral::get_sigma_r, &Bilateral::set_sigma_r, "Range sigma")
+        .def_property("detail", &Bilateral::get_detail, &Bilateral::set_detail, "Detail strength");
+
+    // Note: Bilateral should be used as a class object from Python
 
 
     // Color conversion functions
@@ -105,5 +118,30 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
           py::arg("rgb"));
     m.def("lab_to_rgb", &lab_to_rgb, "Convert LAB to RGB color space",
           py::arg("lab"));
+
+    // Packed 12-bit encoding/decoding functions
+    m.def("encode12_u16", &encode12_u16, "Encode uint16 values to packed 12-bit",
+          py::arg("input"), py::arg("ids_format") = false);
+    m.def("encode12_float", &encode12_float, "Encode float values to packed 12-bit", 
+          py::arg("input"), py::arg("ids_format") = false, py::arg("scaled") = true);
+    
+    m.def("decode12_float", &decode12_float, "Decode packed 12-bit to float",
+          py::arg("input"), py::arg("ids_format") = false, py::arg("scaled") = true);
+    m.def("decode12_half", &decode12_half, "Decode packed 12-bit to half precision",
+          py::arg("input"), py::arg("ids_format") = false, py::arg("scaled") = true);
+    m.def("decode12_u16", &decode12_u16, "Decode packed 12-bit to uint16",
+          py::arg("input"), py::arg("ids_format") = false);
+
+    // Tone mapping functions
+    m.def("compute_image_bounds", &compute_image_bounds, "Compute min/max bounds of image",
+          py::arg("image"), py::arg("stride") = 8);
+    m.def("compute_image_metrics", &compute_image_metrics, "Compute 9-vector image metrics for tone mapping",
+          py::arg("image"), py::arg("stride") = 8);
+    m.def("reinhard_tonemap", &reinhard_tonemap, "Apply Reinhard tone mapping",
+          py::arg("image"), py::arg("metrics"), 
+          py::arg("gamma") = 1.0f, py::arg("intensity") = 1.0f, 
+          py::arg("light_adapt") = 0.8f);
+    m.def("aces_tonemap", &aces_tonemap, "Apply ACES tone mapping",
+          py::arg("image"), py::arg("gamma") = 2.2f);
 
 }

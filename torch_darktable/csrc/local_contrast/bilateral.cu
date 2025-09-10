@@ -23,8 +23,8 @@
 #include <stdexcept>
 #include <algorithm>
 
-#include "cuda_utils.h"
-#include "device_math.h"
+#include "../cuda_utils.h"
+#include "../device_math.h"
 #include "bilateral.h"
 
 
@@ -73,12 +73,8 @@ __global__ void splat_kernel(
         clampf(y / sigma_s, 0.0f, (float)(sizey - 1)),
         clampf(L / sigma_r, 0.0f, (float)(sizez - 1))
     );
-    const int3 ib = make_int3(min((int)g.x, sizex - 2),
-                              min((int)g.y, sizey - 2),
-                              min((int)g.z, sizez - 2));
-    const float3 f = make_float3(g.x - (float)ib.x,
-                                 g.y - (float)ib.y,
-                                 g.z - (float)ib.z);
+    const int3 ib = min(make_int3(g), make_int3(sizex - 2, sizey - 2, sizez - 2));
+    const float3 f = g - ib;
 
     const int gi = grid_index(ib.x, ib.y, ib.z, sizex, sizey, sizez);
 
@@ -224,12 +220,8 @@ __global__ void slice_kernel(
         clampf(y / sigma_s, 0.0f, (float)(sizey - 1)),
         clampf(L / sigma_r, 0.0f, (float)(sizez - 1))
     );
-    const int3 ib = make_int3(min((int)g.x, sizex - 2),
-                              min((int)g.y, sizey - 2),
-                              min((int)g.z, sizez - 2));
-    const float3 f = make_float3(g.x - (float)ib.x,
-                                 g.y - (float)ib.y,
-                                 g.z - (float)ib.z);
+    const int3 ib = min(make_int3(g), make_int3(sizex - 2, sizey - 2, sizez - 2));
+    const float3 f = g - ib;
 
     const int gi = grid_index(ib.x, ib.y, ib.z, sizex, sizey, sizez);
     const int ox = 1;
@@ -258,10 +250,9 @@ struct BilateralImpl : public Bilateral
     int width, height;
     float sigma_s, sigma_r, detail;
 
-    int sizex, sizey, sizez;
-
-    torch::Tensor dev_grid;      // float32 [sizex*sizey*sizez]
-    torch::Tensor dev_grid_tmp;  // float32 same size
+    // Cache tensors for efficiency; infer grid dims from current parameters when (re)allocating
+    torch::Tensor dev_grid;
+    torch::Tensor dev_grid_tmp;
 
     BilateralImpl(torch::Device device,
                   int width,
@@ -273,11 +264,9 @@ struct BilateralImpl : public Bilateral
           sigma_s(sigma_s), sigma_r(sigma_r), detail(detail)
     {
         TORCH_CHECK(width > 0 && height > 0, "Invalid dimensions");
-        compute_grid_size();
-        allocate_buffers();
     }
 
-    void compute_grid_size()
+    std::tuple<int,int,int> compute_grid_size() const
     {
         float ss = sigma_s;
         if(ss < 0.5f) ss = 0.5f;
@@ -295,19 +284,18 @@ struct BilateralImpl : public Bilateral
         // Effective sigmas after potential clamping
         const float eff_sigma_s = fmaxf(height / gy, width / gx);
         const float eff_sigma_r = L_range / gz;
-        sigma_s = eff_sigma_s;
-        sigma_r = eff_sigma_r;
-
-        sizex = (int)ceilf(width  / sigma_s) + 1;
-        sizey = (int)ceilf(height / sigma_s) + 1;
-        sizez = (int)ceilf(L_range / sigma_r) + 1;
+        const float s_s = eff_sigma_s;
+        const float s_r = eff_sigma_r;
+        const int sx = (int)ceilf(width  / s_s) + 1;
+        const int sy = (int)ceilf(height / s_s) + 1;
+        const int sz = (int)ceilf(L_range / s_r) + 1;
+        return {sx, sy, sz};
     }
 
-    void allocate_buffers()
+    void invalidate_buffers()
     {
-        auto opts = torch::TensorOptions().device(device_).dtype(torch::kFloat32);
-        dev_grid = torch::empty({sizez, sizey, sizex}, opts);
-        dev_grid_tmp = torch::empty({sizez, sizey, sizex}, opts);
+        dev_grid = torch::Tensor();
+        dev_grid_tmp = torch::Tensor();
     }
 
     torch::Tensor process(const torch::Tensor &luminance) override
@@ -321,6 +309,15 @@ struct BilateralImpl : public Bilateral
         auto stream = c10::cuda::getCurrentCUDAStream();
         constexpr int block_size = 16;
 
+        // Compute grid sizes on-the-fly and (re)allocate cached buffers if needed
+        auto [sx, sy, sz] = compute_grid_size();
+        auto opts = torch::TensorOptions().device(device_).dtype(torch::kFloat32);
+        if (!dev_grid.defined()) {
+            dev_grid = torch::empty({sz, sy, sx}, opts);
+            dev_grid_tmp = torch::empty({sz, sy, sx}, opts);
+        }
+
+
         // Zero grid using torch
         dev_grid.zero_();
 
@@ -330,46 +327,43 @@ struct BilateralImpl : public Bilateral
             dim3 grid((width + block.x - 1) / block.x, (height + block.y - 1) / block.y);
             splat_kernel<<<grid, block, 0, stream.stream()>>>(
                 luminance.data_ptr<float>(), dev_grid.data_ptr<float>(),
-                width, height, sizex, sizey, sizez, sigma_s, sigma_r);
+                width, height, sx, sy, sz, sigma_s, sigma_r);
         }
 
         // Blur passes: two Gaussian and one derivative along Z
         {
             dim3 block(block_size, block_size);
-            // Copy grid -> tmp via tensor op
-            dev_grid_tmp.copy_(dev_grid);
-
-            // 1) along X
+            // 1) along X - swap inputs instead of copying
             {
-                dim3 grid_dim((sizez + block.x - 1) / block.x, (sizey + block.y - 1) / block.y);
-                const int offset1 = sizex * sizey; // oz
-                const int offset2 = sizex;         // oy
+                dim3 grid_dim((sz + block.x - 1) / block.x, (sy + block.y - 1) / block.y);
+                const int offset1 = sx * sy; // oz
+                const int offset2 = sx;         // oy
                 const int offset3 = 1;             // ox
                 blur_line_kernel<<<grid_dim, block, 0, stream.stream()>>>(
-                    dev_grid_tmp.data_ptr<float>(), dev_grid.data_ptr<float>(),
-                    offset1, offset2, offset3, sizez, sizey, sizex);
+                    dev_grid.data_ptr<float>(), dev_grid_tmp.data_ptr<float>(),
+                    offset1, offset2, offset3, sz, sy, sx);
             }
 
             // 2) along Y
             {
-                dim3 grid_dim((sizez + block.x - 1) / block.x, (sizex + block.y - 1) / block.y);
-                const int offset1 = sizex * sizey; // oz
+                dim3 grid_dim((sz + block.x - 1) / block.x, (sx + block.y - 1) / block.y);
+                const int offset1 = sx * sy; // oz
                 const int offset2 = 1;             // ox
-                const int offset3 = sizex;         // oy
+                const int offset3 = sx;         // oy
                 blur_line_kernel<<<grid_dim, block, 0, stream.stream()>>>(
-                    dev_grid.data_ptr<float>(), dev_grid_tmp.data_ptr<float>(),
-                    offset1, offset2, offset3, sizez, sizex, sizey);
+                    dev_grid_tmp.data_ptr<float>(), dev_grid.data_ptr<float>(),
+                    offset1, offset2, offset3, sz, sx, sy);
             }
 
             // 3) derivative along Z
             {
-                dim3 grid_dim((sizex + block.x - 1) / block.x, (sizey + block.y - 1) / block.y);
+                dim3 grid_dim((sx + block.x - 1) / block.x, (sy + block.y - 1) / block.y);
                 const int offset1 = 1;             // ox
-                const int offset2 = sizex;         // oy
-                const int offset3 = sizex * sizey; // oz
+                const int offset2 = sx;         // oy
+                const int offset3 = sx * sy; // oz
                 blur_line_z_kernel<<<grid_dim, block, 0, stream.stream()>>>(
-                    dev_grid_tmp.data_ptr<float>(), dev_grid.data_ptr<float>(),
-                    offset1, offset2, offset3, sizex, sizey, sizez);
+                    dev_grid.data_ptr<float>(), dev_grid_tmp.data_ptr<float>(),
+                    offset1, offset2, offset3, sx, sy, sz);
             }
         }
 
@@ -379,30 +373,21 @@ struct BilateralImpl : public Bilateral
             dim3 block(block_size, block_size);
             dim3 grid((width + block.x - 1) / block.x, (height + block.y - 1) / block.y);
             slice_kernel<<<grid, block, 0, stream.stream()>>>(
-                luminance.data_ptr<float>(), dev_grid.data_ptr<float>(), output.data_ptr<float>(),
-                width, height, sizex, sizey, sizez, sigma_s, sigma_r, detail);
+                luminance.data_ptr<float>(), dev_grid_tmp.data_ptr<float>(), output.data_ptr<float>(),
+                width, height, sx, sy, sz, sigma_s, sigma_r, detail * 10.0f);
         }
 
         return output;
     }
 
-    py::dict get_parameters() const override
-    {
-        py::dict p;
-        p["width"] = width;
-        p["height"] = height;
-        p["sigma_s"] = sigma_s;
-        p["sigma_r"] = sigma_r;
-        p["detail"] = detail;
-        p["sizex"] = sizex;
-        p["sizey"] = sizey;
-        p["sizez"] = sizez;
-        return p;
-    }
+    
 
-    void set_sigma_s(float v) override { sigma_s = v; compute_grid_size(); allocate_buffers(); }
-    void set_sigma_r(float v) override { sigma_r = v; compute_grid_size(); allocate_buffers(); }
+    void set_sigma_s(float v) override { sigma_s = v; invalidate_buffers(); }
+    void set_sigma_r(float v) override { sigma_r = v; invalidate_buffers(); }
     void set_detail(float v) override { detail = v; }
+    float get_sigma_s() const override { return sigma_s; }
+    float get_sigma_r() const override { return sigma_r; }
+    float get_detail() const override { return detail; }
 };
 
 
