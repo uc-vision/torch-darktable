@@ -104,8 +104,20 @@ def bilateral_rgb(
     return extension.modify_luminance(input_image, filtered_lum)
 
 
+def bilateral_denoise_rgb(
+    bilateral: "extension.Bilateral",
+    input_image: torch.Tensor,
+) -> torch.Tensor:
+    """
+    Edge-aware denoise using bilateral smoothing on luminance.
+    """
+    luminance = extension.compute_luminance(input_image)
+    filtered_lum = bilateral.process_denoise(luminance)
+    return extension.modify_luminance(input_image, filtered_lum)
+
+
 __all__ = [
     "LaplacianParams", 
     "create_laplacian", "local_laplacian_rgb",
-    "create_bilateral", "bilateral_rgb"
+    "create_bilateral", "bilateral_rgb", "bilateral_denoise_rgb"
 ]

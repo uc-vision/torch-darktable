@@ -92,6 +92,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
              py::arg("sigma_s") = 8.0f, py::arg("sigma_r") = 0.1f, py::arg("detail") = 0.0f)
         .def("process", &Bilateral::process, "Process luminance with bilateral grid",
              py::arg("luminance"))
+        .def("process_denoise", &Bilateral::process_denoise, "Edge-aware denoise (bilateral smoothing)",
+             py::arg("luminance"))
         .def_property("sigma_s", &Bilateral::get_sigma_s, &Bilateral::set_sigma_s, "Spatial sigma")
         .def_property("sigma_r", &Bilateral::get_sigma_r, &Bilateral::set_sigma_r, "Range sigma")
         .def_property("detail", &Bilateral::get_detail, &Bilateral::set_detail, "Detail strength");

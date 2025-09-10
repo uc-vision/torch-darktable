@@ -7,6 +7,7 @@
 struct Bilateral {
     virtual ~Bilateral() = default;
     virtual torch::Tensor process(const torch::Tensor &luminance) = 0;
+    virtual torch::Tensor process_denoise(const torch::Tensor &luminance) = 0;
     virtual void set_sigma_s(float sigma_s) = 0;
     virtual void set_sigma_r(float sigma_r) = 0;
     virtual void set_detail(float detail) = 0;

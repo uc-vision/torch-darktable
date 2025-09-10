@@ -106,6 +106,58 @@ __global__ void splat_kernel(
     atomicAdd(grid + gi + oz + oy + ox, w111);
 }
 
+// Numerator splat: accumulate L * weights into grid
+__global__ void splat_num_kernel(
+    const float *in,
+    float *grid,
+    const int width,
+    const int height,
+    const int sizex,
+    const int sizey,
+    const int sizez,
+    const float sigma_s,
+    const float sigma_r)
+{
+    const int x = blockIdx.x * blockDim.x + threadIdx.x;
+    const int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if(x >= width || y >= height) return;
+
+    const float L = in[y * width + x];
+    const float3 g = make_float3(
+        clampf(x / sigma_s, 0.0f, (float)(sizex - 1)),
+        clampf(y / sigma_s, 0.0f, (float)(sizey - 1)),
+        clampf(L / sigma_r, 0.0f, (float)(sizez - 1))
+    );
+    const int3 ib = min(make_int3(g), make_int3(sizex - 2, sizey - 2, sizez - 2));
+    const float3 f = g - ib;
+
+    const int gi = grid_index(ib.x, ib.y, ib.z, sizex, sizey, sizez);
+
+    const float contrib = 1.0f / (sigma_s * sigma_s);
+
+    const float w000 = contrib * (1.0f - f.x) * (1.0f - f.y) * (1.0f - f.z);
+    const float w100 = contrib * (       f.x) * (1.0f - f.y) * (1.0f - f.z);
+    const float w010 = contrib * (1.0f - f.x) * (       f.y) * (1.0f - f.z);
+    const float w110 = contrib * (       f.x) * (       f.y) * (1.0f - f.z);
+    const float w001 = contrib * (1.0f - f.x) * (1.0f - f.y) * (       f.z);
+    const float w101 = contrib * (       f.x) * (1.0f - f.y) * (       f.z);
+    const float w011 = contrib * (1.0f - f.x) * (       f.y) * (       f.z);
+    const float w111 = contrib * (       f.x) * (       f.y) * (       f.z);
+
+    const int ox = 1;
+    const int oy = sizex;
+    const int oz = sizex * sizey;
+
+    atomicAdd(grid + gi,                w000 * L);
+    atomicAdd(grid + gi + ox,           w100 * L);
+    atomicAdd(grid + gi + oy,           w010 * L);
+    atomicAdd(grid + gi + oy + ox,      w110 * L);
+    atomicAdd(grid + gi + oz,           w001 * L);
+    atomicAdd(grid + gi + oz + ox,      w101 * L);
+    atomicAdd(grid + gi + oz + oy,      w011 * L);
+    atomicAdd(grid + gi + oz + oy + ox, w111 * L);
+}
+
 
 // Blur kernels, translated from bilateral.cl
 __global__ void blur_line_kernel(
@@ -242,6 +294,62 @@ __global__ void slice_kernel(
     out[y * width + x] = Lout;
 }
 
+// Denoise: slice weighted average from two blurred grids (sum_wL, sum_w)
+__global__ void slice_denoise_kernel(
+    const float *in,
+    const float *grid_num,
+    const float *grid_den,
+    float *out,
+    const int width,
+    const int height,
+    const int sizex,
+    const int sizey,
+    const int sizez,
+    const float sigma_s,
+    const float sigma_r)
+{
+    const int x = blockIdx.x * blockDim.x + threadIdx.x;
+    const int y = blockIdx.y * blockDim.y + threadIdx.y;
+    if(x >= width || y >= height) return;
+
+    const float L = in[y * width + x];
+    const float3 g = make_float3(
+        clampf(x / sigma_s, 0.0f, (float)(sizex - 1)),
+        clampf(y / sigma_s, 0.0f, (float)(sizey - 1)),
+        clampf(L / sigma_r, 0.0f, (float)(sizez - 1))
+    );
+    const int3 ib = min(make_int3(g), make_int3(sizex - 2, sizey - 2, sizez - 2));
+    const float3 f = g - ib;
+
+    const int gi = grid_index(ib.x, ib.y, ib.z, sizex, sizey, sizez);
+    const int ox = 1;
+    const int oy = sizex;
+    const int oz = sizex * sizey;
+
+    const float num =
+          grid_num[gi]               * (1.0f - f.x) * (1.0f - f.y) * (1.0f - f.z)
+        + grid_num[gi + ox]          * (       f.x) * (1.0f - f.y) * (1.0f - f.z)
+        + grid_num[gi + oy]          * (1.0f - f.x) * (       f.y) * (1.0f - f.z)
+        + grid_num[gi + oy + ox]     * (       f.x) * (       f.y) * (1.0f - f.z)
+        + grid_num[gi + oz]          * (1.0f - f.x) * (1.0f - f.y) * (       f.z)
+        + grid_num[gi + oz + ox]     * (       f.x) * (1.0f - f.y) * (       f.z)
+        + grid_num[gi + oz + oy]     * (1.0f - f.x) * (       f.y) * (       f.z)
+        + grid_num[gi + oz + oy + ox]* (       f.x) * (       f.y) * (       f.z);
+
+    const float den =
+          grid_den[gi]               * (1.0f - f.x) * (1.0f - f.y) * (1.0f - f.z)
+        + grid_den[gi + ox]          * (       f.x) * (1.0f - f.y) * (1.0f - f.z)
+        + grid_den[gi + oy]          * (1.0f - f.x) * (       f.y) * (1.0f - f.z)
+        + grid_den[gi + oy + ox]     * (       f.x) * (       f.y) * (1.0f - f.z)
+        + grid_den[gi + oz]          * (1.0f - f.x) * (1.0f - f.y) * (       f.z)
+        + grid_den[gi + oz + ox]     * (       f.x) * (1.0f - f.y) * (       f.z)
+        + grid_den[gi + oz + oy]     * (1.0f - f.x) * (       f.y) * (       f.z)
+        + grid_den[gi + oz + oy + ox]* (       f.x) * (       f.y) * (       f.z);
+
+    const float Lout = (den > 1e-8f) ? (num / den) : L;
+    out[y * width + x] = Lout;
+}
+
 
 // Bilateral workspace implementation (style similar to Laplacian)
 struct BilateralImpl : public Bilateral
@@ -253,6 +361,8 @@ struct BilateralImpl : public Bilateral
     // Cache tensors for efficiency; infer grid dims from current parameters when (re)allocating
     torch::Tensor dev_grid;
     torch::Tensor dev_grid_tmp;
+    torch::Tensor dev_grid_num; // for denoise (sum of w*L)
+    torch::Tensor dev_grid_den; // for denoise (sum of w)
 
     BilateralImpl(torch::Device device,
                   int width,
@@ -296,6 +406,8 @@ struct BilateralImpl : public Bilateral
     {
         dev_grid = torch::Tensor();
         dev_grid_tmp = torch::Tensor();
+        dev_grid_num = torch::Tensor();
+        dev_grid_den = torch::Tensor();
     }
 
     torch::Tensor process(const torch::Tensor &luminance) override
@@ -377,6 +489,109 @@ struct BilateralImpl : public Bilateral
                 width, height, sx, sy, sz, sigma_s, sigma_r, detail * 10.0f);
         }
 
+        return output;
+    }
+
+    // Edge-aware denoise using bilateral grid weighted average
+    torch::Tensor process_denoise(const torch::Tensor &luminance) override
+    {
+        TORCH_CHECK(luminance.dtype() == torch::kFloat32, "Input must be float32");
+        TORCH_CHECK(luminance.dim() == 2, "Input must be 2D (H,W)");
+        TORCH_CHECK(luminance.size(0) == height && luminance.size(1) == width,
+                    "Input dims must match (H,W)");
+        TORCH_CHECK(luminance.is_cuda(), "Input must be CUDA tensor");
+
+        auto stream = c10::cuda::getCurrentCUDAStream();
+        constexpr int block_size = 16;
+
+        auto [sx, sy, sz] = compute_grid_size();
+        auto opts = torch::TensorOptions().device(device_).dtype(torch::kFloat32);
+        if (!dev_grid_num.defined()) {
+            dev_grid_num = torch::empty({sz, sy, sx}, opts);
+            dev_grid_den = torch::empty({sz, sy, sx}, opts);
+            dev_grid_tmp = torch::empty({sz, sy, sx}, opts);
+        }
+
+        dev_grid_num.zero_();
+        dev_grid_den.zero_();
+
+        // Reuse splat kernel twice: once for weights, once for weighted luminance by scaling input
+        {
+            dim3 block(block_size, block_size);
+            dim3 grid((width + block.x - 1) / block.x, (height + block.y - 1) / block.y);
+            // weights
+            splat_kernel<<<grid, block, 0, stream.stream()>>>(
+                luminance.data_ptr<float>(), dev_grid_den.data_ptr<float>(),
+                width, height, sx, sy, sz, sigma_s, sigma_r);
+        }
+
+        // For numerator, call a specialized splat that multiplies by L. Implement with a simple wrapper kernel
+        // to avoid extra memory writes; here we reuse slice logic by computing weights then scaling by L at slice,
+        // but to keep it faithful, we splat L as well by calling splat with a temporary that is L (same as weights but accumulated separately)
+        // Numerator splat (sum of w * L)
+        {
+            dim3 block(block_size, block_size);
+            dim3 grid((width + block.x - 1) / block.x, (height + block.y - 1) / block.y);
+            splat_num_kernel<<<grid, block, 0, stream.stream()>>>(
+                luminance.data_ptr<float>(), dev_grid_num.data_ptr<float>(),
+                width, height, sx, sy, sz, sigma_s, sigma_r);
+        }
+
+        // Blur both grids with Gaussian along X and Y and Z (use blur_line_kernel for all three, not derivative)
+        {
+            dim3 block(block_size, block_size);
+            // X
+            {
+                dim3 grid_dim((sz + block.x - 1) / block.x, (sy + block.y - 1) / block.y);
+                const int offset1 = sx * sy; // oz
+                const int offset2 = sx;         // oy
+                const int offset3 = 1;             // ox
+                blur_line_kernel<<<grid_dim, block, 0, stream.stream()>>>(
+                    dev_grid_den.data_ptr<float>(), dev_grid_tmp.data_ptr<float>(),
+                    offset1, offset2, offset3, sz, sy, sx);
+                blur_line_kernel<<<grid_dim, block, 0, stream.stream()>>>(
+                    dev_grid_num.data_ptr<float>(), dev_grid.data_ptr<float>(),
+                    offset1, offset2, offset3, sz, sy, sx);
+            }
+            // Y
+            {
+                dim3 grid_dim((sz + block.x - 1) / block.x, (sx + block.y - 1) / block.y);
+                const int offset1 = sx * sy; // oz
+                const int offset2 = 1;             // ox
+                const int offset3 = sx;         // oy
+                blur_line_kernel<<<grid_dim, block, 0, stream.stream()>>>(
+                    dev_grid_tmp.data_ptr<float>(), dev_grid_den.data_ptr<float>(),
+                    offset1, offset2, offset3, sz, sx, sy);
+                blur_line_kernel<<<grid_dim, block, 0, stream.stream()>>>(
+                    dev_grid.data_ptr<float>(), dev_grid_num.data_ptr<float>(),
+                    offset1, offset2, offset3, sz, sx, sy);
+            }
+            // Z (Gaussian) - reuse blur_line_kernel by treating Z as the 3rd axis like X/Y
+            {
+                dim3 grid_dim((sx + block.x - 1) / block.x, (sy + block.y - 1) / block.y);
+                const int offset1 = 1;             // ox
+                const int offset2 = sx;         // oy
+                const int offset3 = sx * sy; // oz
+                blur_line_kernel<<<grid_dim, block, 0, stream.stream()>>>(
+                    dev_grid_den.data_ptr<float>(), dev_grid_tmp.data_ptr<float>(),
+                    offset1, offset2, offset3, sx, sy, sz);
+                blur_line_kernel<<<grid_dim, block, 0, stream.stream()>>>(
+                    dev_grid_num.data_ptr<float>(), dev_grid.data_ptr<float>(),
+                    offset1, offset2, offset3, sx, sy, sz);
+            }
+        }
+
+        auto output = torch::empty({height, width}, torch::device(torch::kCUDA).dtype(torch::kFloat32));
+        {
+            dim3 block(block_size, block_size);
+            dim3 grid((width + block.x - 1) / block.x, (height + block.y - 1) / block.y);
+            slice_denoise_kernel<<<grid, block, 0, stream.stream()>>>(
+                luminance.data_ptr<float>(),
+                dev_grid_num.data_ptr<float>(),
+                dev_grid_den.data_ptr<float>(),
+                output.data_ptr<float>(),
+                width, height, sx, sy, sz, sigma_s, sigma_r);
+        }
         return output;
     }
 
