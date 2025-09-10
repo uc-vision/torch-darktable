@@ -29,7 +29,7 @@ std::shared_ptr<Laplacian> create_laplacian(torch::Device device,
   float sigma, float shadows, float highlights, float clarity);
 
 std::shared_ptr<Bilateral> create_bilateral(torch::Device device,
-  int width, int height, float sigma_s, float sigma_r, float detail);
+  int width, int height, float sigma_s, float sigma_r);
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     // Minimal helper to reduce boilerplate for bulk setters
@@ -89,14 +89,13 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         .def(py::init(&create_bilateral), "Create Bilateral grid algorithm",
              py::arg("device"),
              py::arg("width"), py::arg("height"),
-             py::arg("sigma_s") = 8.0f, py::arg("sigma_r") = 0.1f, py::arg("detail") = 0.0f)
-        .def("process", &Bilateral::process, "Process luminance with bilateral grid",
-             py::arg("luminance"))
+             py::arg("sigma_s") = 8.0f, py::arg("sigma_r") = 0.1f)
+        .def("process_contrast", &Bilateral::process_contrast, "Local contrast on luminance with bilateral grid",
+             py::arg("luminance"), py::arg("detail"))
         .def("process_denoise", &Bilateral::process_denoise, "Edge-aware denoise (bilateral smoothing)",
-             py::arg("luminance"))
+             py::arg("luminance"), py::arg("amount") = 1.0f)
         .def_property("sigma_s", &Bilateral::get_sigma_s, &Bilateral::set_sigma_s, "Spatial sigma")
-        .def_property("sigma_r", &Bilateral::get_sigma_r, &Bilateral::set_sigma_r, "Range sigma")
-        .def_property("detail", &Bilateral::get_detail, &Bilateral::set_detail, "Detail strength");
+        .def_property("sigma_r", &Bilateral::get_sigma_r, &Bilateral::set_sigma_r, "Range sigma");
 
     // Note: Bilateral should be used as a class object from Python
 
@@ -138,7 +137,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("compute_image_bounds", &compute_image_bounds, "Compute min/max bounds of image",
           py::arg("image"), py::arg("stride") = 8);
     m.def("compute_image_metrics", &compute_image_metrics, "Compute 9-vector image metrics for tone mapping",
-          py::arg("image"), py::arg("stride") = 8);
+          py::arg("image"), py::arg("stride") = 8, py::arg("min_gray") = 1e-4f);
     m.def("reinhard_tonemap", &reinhard_tonemap, "Apply Reinhard tone mapping",
           py::arg("image"), py::arg("metrics"), 
           py::arg("gamma") = 1.0f, py::arg("intensity") = 1.0f, 

@@ -1,5 +1,6 @@
 #include <cuda_runtime.h>
 #include "color_conversions.h"
+#include "cuda_utils.h"
 
 // RGB to XYZ conversion (sRGB D65)
 __device__ float3 rgb_to_xyz(float3 rgb) {
@@ -153,9 +154,8 @@ torch::Tensor convert_color_space(const torch::Tensor& input, const char* kernel
 
     auto output = torch::empty_like(input);
 
-    constexpr int block_size = 16;
-    dim3 block(block_size, block_size);
-    dim3 grid((width + block_size - 1) / block_size, (height + block_size - 1) / block_size);
+    dim3 block = block_size_2d;
+    dim3 grid = grid2d(width, height);
 
     color_conversion_kernel<Converter><<<grid, block>>>(
         input.data_ptr<float>(), output.data_ptr<float>(), width, height);
@@ -260,9 +260,8 @@ torch::Tensor compute_luminance(const torch::Tensor& rgb) {
     
     auto luminance = torch::zeros({height, width}, rgb.options());
     
-    constexpr int block_size = 16;
-    dim3 block(block_size, block_size);
-    dim3 grid((width + block_size - 1) / block_size, (height + block_size - 1) / block_size);
+    dim3 block = block_size_2d;
+    dim3 grid = grid2d(width, height);
     
     compute_luminance_kernel<<<grid, block>>>(
         rgb.data_ptr<float>(), luminance.data_ptr<float>(), width, height);
@@ -314,19 +313,13 @@ torch::Tensor modify_luminance(const torch::Tensor& rgb, const torch::Tensor& ne
     
     auto result = torch::zeros_like(rgb);
     
-    constexpr int block_size = 16;
-    dim3 block(block_size, block_size);
-    dim3 grid((width + block_size - 1) / block_size, (height + block_size - 1) / block_size);
+    dim3 block = block_size_2d;
+    dim3 grid = grid2d(width, height);
     
     modify_luminance_kernel<<<grid, block>>>(
         rgb.data_ptr<float>(), new_luminance.data_ptr<float>(), 
         result.data_ptr<float>(), width, height);
     
-    // // Check for CUDA errors
-    // cudaError_t err = cudaGetLastError();
-    // if (err != cudaSuccess) {
-    //     throw std::runtime_error(std::string("CUDA error in modify_luminance_kernel: ") + cudaGetErrorString(err));
-    // }
     
     // Synchronize to ensure kernel completion
     err = cudaDeviceSynchronize();

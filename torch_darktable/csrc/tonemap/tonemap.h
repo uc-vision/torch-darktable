@@ -4,7 +4,7 @@
 
 // Image metrics computation
 torch::Tensor compute_image_bounds(torch::Tensor image, int stride = 8);
-torch::Tensor compute_image_metrics(torch::Tensor image, int stride = 8);
+torch::Tensor compute_image_metrics(torch::Tensor image, int stride = 8, float min_gray = 1e-4f);
 
 // Tone mapping
 torch::Tensor reinhard_tonemap(

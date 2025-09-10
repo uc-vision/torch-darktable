@@ -7,6 +7,7 @@
 #include <torch/types.h>
 #include <ATen/ATen.h>
 #include <c10/cuda/CUDAStream.h>
+#include "../cuda_utils.h"
 #include <cstdint>
 
 #include "demosaic.h"
@@ -429,8 +430,8 @@ struct PPGImpl : public PPG {
         auto contiguous_input = input.contiguous();
         auto stream = at::cuda::getCurrentCUDAStream().stream();
 
-        dim3 block(16, 16);
-        dim3 grid((width_ + block.x - 1) / block.x, (height_ + block.y - 1) / block.y);
+        dim3 block = block_size_2d;
+        dim3 grid = grid2d(width_, height_);
 
         const auto buffer_opts = torch::TensorOptions().dtype(torch::kFloat32).device(device_);
         torch::Tensor output_buffer = torch::zeros({height_, width_, 3}, buffer_opts);

@@ -114,7 +114,7 @@ __global__ void compute_bounds_kernel(
     // Each thread processes one pixel
     if (x < width && y < height) {
         // RGB image: (height, width, 3)
-        int pixel_idx = (y * width + x) * 3;
+        int pixel_idx = y * width + x;
         float3 rgb = float3_load(image, pixel_idx);
         
         local_min = fminf(fminf(rgb.x, rgb.y), rgb.z);
@@ -134,7 +134,8 @@ __global__ void compute_metrics_kernel(
     float bounds_max,
     int height,
     int width,
-    int stride
+    int stride,
+    float min_gray
 ) {
     int x = (blockIdx.x * blockDim.x + threadIdx.x) * stride;
     int y = (blockIdx.y * blockDim.y + threadIdx.y) * stride;
@@ -142,7 +143,7 @@ __global__ void compute_metrics_kernel(
     if (x >= width || y >= height) return;
     
     // Load RGB pixel
-    int pixel_idx = (y * width + x) * 3;
+    int pixel_idx = y * width + x;
     float3 rgb = float3_load(image, pixel_idx);
     
     // Scale to [0,1] range
@@ -150,7 +151,7 @@ __global__ void compute_metrics_kernel(
     float3 scaled = (rgb - bounds_min) / range;
     
     float gray = rgb_to_gray(scaled);
-    float log_gray = logf(fmaxf(gray, 1e-4f));
+    float log_gray = logf(fmaxf(gray, min_gray));
     
     // Reduce + atomic writes in one step
     reduce_add(log_gray, &metrics[4]);     // log_mean
@@ -191,7 +192,7 @@ torch::Tensor compute_image_bounds(torch::Tensor image, int stride) {
     return bounds;
 }
 
-torch::Tensor compute_image_metrics(torch::Tensor image, int stride) {
+torch::Tensor compute_image_metrics(torch::Tensor image, int stride, float min_gray) {
     TORCH_CHECK(image.device().is_cuda(), "Input must be on CUDA device");
     TORCH_CHECK(image.dtype() == torch::kFloat32, "Input must be float32");
     TORCH_CHECK(image.dim() == 3 && image.size(2) == 3, "Input must be (H, W, 3)");
@@ -223,7 +224,8 @@ torch::Tensor compute_image_metrics(torch::Tensor image, int stride) {
         bounds_max,
         height,
         width,
-        stride
+        stride,
+        min_gray
     );
 
     CUDA_CHECK_KERNEL();

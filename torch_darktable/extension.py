@@ -70,8 +70,7 @@ def _install_algorithm_repr() -> None:
     def _bilateral_repr(self) -> str:
         return (
             f"Bilateral(sigma_s={self.sigma_s}, "
-            f"sigma_r={self.sigma_r}, "
-            f"detail={self.detail})"
+            f"sigma_r={self.sigma_r})"
         )
 
     extension.PPG.__repr__ = _ppg_repr

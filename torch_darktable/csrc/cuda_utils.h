@@ -8,6 +8,14 @@
 #include <torch/extension.h>
 #include <ATen/ATen.h>
 
+// Common 2D launch configuration helpers
+static inline int div_up(int x, int y) { return (x + y - 1) / y; }
+static constexpr int image_block_size = 16;
+static inline dim3 grid2d(int nx, int ny) {
+    return dim3(div_up(nx, image_block_size), div_up(ny, image_block_size));
+}
+static constexpr dim3 block_size_2d = dim3(image_block_size, image_block_size);
+
 // CUDA error checking macros
 #define CUDA_CHECK(call) do { \
     cudaError_t err = call; \

@@ -476,10 +476,9 @@ struct LaplacianImpl : public Laplacian
     void pad_input_step(const torch::Tensor& input)
     {
         auto stream = c10::cuda::getCurrentCUDAStream();
-        constexpr int block_size = 16;
         
-        dim3 block(block_size, block_size);
-        dim3 grid((bwidth + block_size - 1) / block_size, (bheight + block_size - 1) / block_size);
+        dim3 block = block_size_2d;
+        dim3 grid = grid2d(bwidth, bheight);
         
         // Pad directly to fp16 storage
         pad_input_half<<<grid, block, 0, stream.stream()>>>(
@@ -491,7 +490,6 @@ struct LaplacianImpl : public Laplacian
     void build_gaussian_pyramid_step()
     {
         auto stream = c10::cuda::getCurrentCUDAStream();
-        constexpr int block_size = 16;
 
         // Lazy allocate if needed
         if (dev_padded.empty()) {
@@ -517,8 +515,8 @@ struct LaplacianImpl : public Laplacian
             const int level_width = dl(bwidth, l);
             const int level_height = dl(bheight, l);
             
-            dim3 block(block_size, block_size);
-            dim3 grid((level_width + block_size - 1) / block_size, (level_height + block_size - 1) / block_size);
+            dim3 block = block_size_2d;
+            dim3 grid = grid2d(level_width, level_height);
             
             // All levels now use fp16 -> fp16 processing
             gauss_reduce_half<<<grid, block, 0, stream.stream()>>>(
@@ -531,13 +529,12 @@ struct LaplacianImpl : public Laplacian
     void process_gamma_curves_step()
     {
         auto stream = c10::cuda::getCurrentCUDAStream();
-        constexpr int block_size = 16;
         
         for(int k=0; k<num_gamma; k++) {
             const float g = (k + 0.5f) / (float)num_gamma;
             
-            dim3 block(block_size, block_size);
-            dim3 grid((bwidth + block_size - 1) / block_size, (bheight + block_size - 1) / block_size);
+            dim3 block = block_size_2d;
+            dim3 grid = grid2d(bwidth, bheight);
             
             // Process curve directly: fp16 input -> fp16 output
             process_curve_half<<<grid, block, 0, stream.stream()>>>(
@@ -550,8 +547,8 @@ struct LaplacianImpl : public Laplacian
                 const int level_width = dl(bwidth, l);
                 const int level_height = dl(bheight, l);
                 
-                dim3 block(block_size, block_size);
-                dim3 grid((level_width + block_size - 1) / block_size, (level_height + block_size - 1) / block_size);
+                dim3 block = block_size_2d;
+                dim3 grid = grid2d(level_width, level_height);
                 
                 gauss_reduce_half<<<grid, block, 0, stream.stream()>>>(
                     processed_ptr(l-1, k), processed_ptr(l, k), 
@@ -563,14 +560,13 @@ struct LaplacianImpl : public Laplacian
     void assemble_pyramid_step()
     {
         auto stream = c10::cuda::getCurrentCUDAStream();
-        constexpr int block_size = 16;
         
         for(int l=num_levels-2; l >= 0; l--) {
             const int pw = dl(bwidth, l);
             const int ph = dl(bheight, l);
             
-            dim3 block(block_size, block_size);
-            dim3 grid((pw + block_size - 1) / block_size, (ph + block_size - 1) / block_size);
+            dim3 block = block_size_2d;
+            dim3 grid = grid2d(pw, ph);
             
             // Fill pointer arrays on host
             std::vector<int64_t> h_ptrs0(num_gamma), h_ptrs1(num_gamma);
@@ -594,9 +590,8 @@ struct LaplacianImpl : public Laplacian
     void write_back_step(torch::Tensor& output)
     {
         auto stream = c10::cuda::getCurrentCUDAStream();
-        constexpr int block_size = 16;
-        dim3 final_block(block_size, block_size);
-        dim3 final_grid((width + block_size - 1) / block_size, (height + block_size - 1) / block_size);
+        dim3 final_block = block_size_2d;
+        dim3 final_grid = grid2d(width, height);
         
         write_back_half<<<final_grid, final_block, 0, stream.stream()>>>(
             output_ptr(0), output.data_ptr<float>(),

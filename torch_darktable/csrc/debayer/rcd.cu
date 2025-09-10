@@ -8,6 +8,7 @@
 #include <torch/types.h>
 #include <ATen/ATen.h>
 #include <c10/cuda/CUDAStream.h>
+#include "../cuda_utils.h"
 #include <cstdint>
 #include "../device_math.h"
 
@@ -609,9 +610,9 @@ struct RCDImpl : public RCD {
         const int RCD_MARGIN = 7;
         auto stream = at::cuda::getCurrentCUDAStream().stream();
 
-        dim3 block(16, 16);
-        dim3 grid((width_ + block.x - 1) / block.x, (height_ + block.y - 1) / block.y);
-        dim3 grid_half((width_/2 + block.x - 1) / block.x, (height_ + block.y - 1) / block.y);
+        dim3 block = block_size_2d;
+        dim3 grid = grid2d(width_, height_);
+        dim3 grid_half = grid2d(width_/2, height_);
 
         border_interpolate_kernel<<<grid, block, 0, stream>>>(
             contiguous_input.data_ptr<float>(), reinterpret_cast<float3*>(output_buffer_.data_ptr<float>()),

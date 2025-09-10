@@ -8,7 +8,7 @@ class Reinhard:
     """Reinhard tone mapping algorithm with utilities for working with image metrics."""
     
     @staticmethod
-    def compute_metrics(image: torch.Tensor, stride: int = 8) -> torch.Tensor:
+    def compute_metrics(image: torch.Tensor, stride: int = 8, min_gray: float = 1e-4) -> torch.Tensor:
         """
         Compute image statistics for Reinhard tone mapping.
         
@@ -23,7 +23,7 @@ class Reinhard:
         assert image.dtype == torch.float32, "Input must be float32"
         assert image.device.type == 'cuda', "Input must be on CUDA device"
         
-        return extension.compute_image_metrics(image, stride)
+        return extension.compute_image_metrics(image, stride, min_gray)
     
     @staticmethod
     def metrics_to_dict(metrics: torch.Tensor) -> dict[str, float]:

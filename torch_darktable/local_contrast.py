@@ -67,7 +67,6 @@ def create_bilateral(
     image_size: tuple[int, int],
     spatial_sigma: float,
     range_sigma: float,
-    detail: float = 0.0
 ) -> "extension.Bilateral":
     """
     Create a bilateral filter object.
@@ -82,26 +81,23 @@ def create_bilateral(
         Bilateral algorithm object
     """
     width, height = image_size
-    return extension.Bilateral(device, width, height, spatial_sigma, range_sigma, detail)
+    return extension.Bilateral(device, width, height, spatial_sigma, range_sigma)
 
 
 def bilateral_rgb(
     bilateral: "extension.Bilateral",
     input_image: torch.Tensor,
+    *,
+    detail: float | None = None,
+    denoise_amount: float | None = None,
 ) -> torch.Tensor:
-    """
-    Apply bilateral filtering to RGB image.
-    
-    Args:
-        bilateral: Bilateral algorithm object
-        input_image: Input RGB image tensor
-        
-    Returns:
-        Filtered RGB image tensor
-    """
     luminance = extension.compute_luminance(input_image)
-    filtered_lum = bilateral.process(luminance)
-    return extension.modify_luminance(input_image, filtered_lum)
+    L = luminance
+    if denoise_amount is not None and denoise_amount > 0.0:
+        L = bilateral.process_denoise(L, float(denoise_amount))
+    if detail is not None and detail != 0.0:
+        L = bilateral.process_contrast(L, float(detail))
+    return extension.modify_luminance(input_image, L)
 
 
 def bilateral_denoise_rgb(
@@ -111,9 +107,7 @@ def bilateral_denoise_rgb(
     """
     Edge-aware denoise using bilateral smoothing on luminance.
     """
-    luminance = extension.compute_luminance(input_image)
-    filtered_lum = bilateral.process_denoise(luminance)
-    return extension.modify_luminance(input_image, filtered_lum)
+    return bilateral_rgb(bilateral, input_image, denoise_amount=1.0)
 
 
 __all__ = [

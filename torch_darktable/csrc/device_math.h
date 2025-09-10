@@ -29,6 +29,11 @@ __device__ __forceinline__ float clipf(float x) {
     return fminf(fmaxf(x, 0.0f), 1.0f);
 }
 
+// Clamp float to [lo, hi]
+__device__ __forceinline__ float clampf(float v, float lo, float hi) {
+    return fminf(fmaxf(v, lo), hi);
+}
+
 __device__ __host__ inline int clamp(int x, int low, int high) {
     return min(max(x, low), high);
 }
@@ -261,6 +266,16 @@ __device__ __forceinline__ int3 make_int3(const float3& f) {
 
 __device__ __forceinline__ float3 make_float3(const int3& i) {
     return make_float3((float)i.x, (float)i.y, (float)i.z);
+}
+
+// Flatten 3D index (x, y, z) for grid sized (sizex, sizey, sizez)
+__device__ __forceinline__ int grid_index_2d(int x, int y, int z, int sizex, int sizey, int sizez) {
+    return x + sizex * (y + sizey * z);
+}
+
+// Backward-compatible name used in some files
+__device__ __forceinline__ int grid_index(int x, int y, int z, int sizex, int sizey, int sizez) {
+    return grid_index_2d(x, y, z, sizex, sizey, sizez);
 }
 
 // RGB to grayscale conversion (Rec. 709)
