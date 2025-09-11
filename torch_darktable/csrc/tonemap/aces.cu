@@ -49,7 +49,7 @@ __global__ void aces_tonemap_kernel(
     float3_to_uint8_rgb(gamma_corrected, output, idx);
 }
 
-torch::Tensor aces_tonemap(torch::Tensor image, float gamma) {
+torch::Tensor aces_tonemap(const torch::Tensor& image, float gamma) {
     TORCH_CHECK(image.device().is_cuda(), "Input must be on CUDA device");
     TORCH_CHECK(image.dtype() == torch::kFloat32, "Input must be float32");
     TORCH_CHECK(image.dim() == 3 && image.size(2) == 3, "Input must be (H, W, 3)");

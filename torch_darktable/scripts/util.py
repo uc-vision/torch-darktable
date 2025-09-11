@@ -27,22 +27,15 @@ def load_raw_image(filepath:Path, camera_settings:CameraSettings, device:torch.d
   decoded = td.decode12(raw_cuda, output_dtype=torch.float32, format_type=fmt)
 
   bayer = decoded.view(-1, camera_settings.width)
-  return scale_bayer(bayer, camera_settings.color_scales) * camera_settings.brightness
+  return scale_bayer(bayer, camera_settings.white_balance) * camera_settings.brightness
 
 
 
 camera_settings = dict(
-    blackfly=CameraSettings(width=4096, ids_format=False, color_scales=(1.0, 1.0, 1.0), brightness=0.8),
-    ids=CameraSettings(width=2472, ids_format=True, color_scales=(1.5, 1.0, 1.5), brightness=1.0)
+    blackfly=CameraSettings(width=4096, ids_format=False, white_balance=(1.0, 1.0, 1.0), brightness=0.8),
+    ids=CameraSettings(width=2472, ids_format=True, white_balance=(1.5, 1.0, 1.5), brightness=1.0)
 )
 
-
-def add_camera_settings(parser):
-    parser.add_argument('--camera', default='blackfly', choices=list(camera_settings.keys()), help='Camera to use')
-
-
-def settings_from_args(args) -> CameraSettings:
-  return camera_settings[args.camera]
 
 
 
@@ -76,11 +69,12 @@ def expand_bayer(x):
     return result
 
 
-def scale_bayer(x, color_scales=(0.5, 1.0, 0.5)):
-  r, g, b = color_scales
+def scale_bayer(x, white_balance=(0.5, 1.0, 0.5)):
+  r, g, b = white_balance
   scaling = torch.tensor([r, g, g, b], device=x.device, dtype=x.dtype)
 
 
   x = stack_bayer(x) * scaling
   x = expand_bayer(x)
   return x
+

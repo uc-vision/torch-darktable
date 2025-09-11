@@ -4,17 +4,9 @@ from PIL import Image
 import numpy as np
 
 from torch_darktable import create_ppg, create_rcd, create_postprocess, BayerPattern
+from torch_darktable.debayer import create_bilinear, patterns
 from torch_darktable.utilities import load_image, rgb_to_bayer
 
-
-def create_debayer_algorithm(device, width, height, pattern, args):
-    """Create debayer algorithm from args object (handles PPG, RCD, and postprocessing)."""
-    if args.algorithm.lower() == "ppg":
-        return create_ppg(device, (width, height), pattern, median_threshold=args.median_threshold)
-    elif args.algorithm.lower() == "rcd":
-        return create_rcd(device, (width, height), pattern, input_scale=args.input_scale, output_scale=args.output_scale)
-    else:
-        raise ValueError(f"Unknown algorithm: {args.algorithm}. Choose 'ppg' or 'rcd'")
 
 
 def create_postprocess_algorithm(device, width, height, pattern, args):
@@ -37,8 +29,14 @@ def test_demosaic(image_path: Path, pattern: BayerPattern, args):
     print(f"Input range: {bayer_input.min().item():.3f} - {bayer_input.max().item():.3f}")
     
     # Create demosaic algorithm
-    print(f"Creating {args.algorithm.upper()} demosaic algorithm...")
-    debayer_alg = create_debayer_algorithm(device, width, height, pattern, args)
+    if args.bilinear:
+        debayer_alg = create_bilinear(pattern)
+    elif args.ppg:
+        debayer_alg = create_ppg(device, (width, height), pattern, median_threshold=args.median_threshold)
+    else: # args.rcd
+        debayer_alg = create_rcd(device, (width, height), pattern, input_scale=args.input_scale, output_scale=args.output_scale)
+
+    print(debayer_alg)
     result = debayer_alg.process(bayer_input)
 
     # Apply post-processing if requested
@@ -59,11 +57,16 @@ def test_demosaic(image_path: Path, pattern: BayerPattern, args):
 def main():
     parser = argparse.ArgumentParser(description='Test demosaic algorithms on an image')
     parser.add_argument('image', type=Path, help='Input image path')
-    parser.add_argument('--pattern', type=str, default='RGGB', choices=[pattern.name for pattern in BayerPattern],
+    parser.add_argument('--pattern', type=str, default=BayerPattern.RGGB.name, choices=
+      list(patterns.keys()),
                        help='Bayer pattern')
-    parser.add_argument('--algorithm', type=str, default='ppg', choices=['ppg', 'rcd'],
-                       help='Demosaic algorithm to use')
-    parser.add_argument('--median_threshold', type=float, default=None,
+
+
+    parser.add_argument('--bilinear', action='store_true', help='Use bilinear demosaic')
+    parser.add_argument('--ppg', action='store_true', help='Use PPG demosaic')
+    parser.add_argument('--rcd', action='store_true', help='Use RCD demosaic')
+
+    parser.add_argument('--median_threshold', type=float, default=0.0,
                        help='Median threshold (PPG only)')
 
     parser.add_argument('--input_scale', type=float, default=1.0,
@@ -82,7 +85,7 @@ def main():
     args = parser.parse_args()
     
     try:
-        test_demosaic(args.image, BayerPattern[args.pattern], args)
+        test_demosaic(args.image, patterns[args.pattern], args)
     except Exception as e:
         print(f"Error: {e}")
         return 1

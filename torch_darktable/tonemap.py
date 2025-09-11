@@ -1,9 +1,10 @@
 """Tone mapping algorithms and utilities."""
 
+from beartype import beartype
 import torch
 from .extension import extension
 
-
+@beartype
 class Reinhard:
     """Reinhard tone mapping algorithm with utilities for working with image metrics."""
     
@@ -91,7 +92,7 @@ class Reinhard:
         
         return extension.reinhard_tonemap(image, metrics, gamma, intensity, light_adapt)
 
-
+@beartype
 def aces_tonemap(image: torch.Tensor, gamma: float = 2.2) -> torch.Tensor:
     """
     Apply ACES tone mapping (industry standard).
@@ -112,7 +113,11 @@ def aces_tonemap(image: torch.Tensor, gamma: float = 2.2) -> torch.Tensor:
     return extension.aces_tonemap(image, gamma)
 
 
-compute_image_bounds = extension.compute_image_bounds
+compute_image_bounds = beartype(extension.compute_image_bounds)
+
+@beartype
+def compute_image_metrics(images: list[torch.Tensor], stride: int = 8, min_gray: float = 1e-4) -> torch.Tensor:
+    return extension.compute_image_metrics(images, stride, min_gray)
 
 
-__all__ = ["Reinhard", "aces_tonemap", "compute_image_bounds"]
+__all__ = ["Reinhard", "aces_tonemap", "compute_image_bounds", "compute_image_metrics"]

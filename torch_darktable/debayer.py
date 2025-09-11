@@ -10,6 +10,14 @@ class Packed12Format(Enum):
     STANDARD = 0
     IDS = 1
 
+class Bilinear5x5:
+  def __init__(self, bayer_pattern: extension.BayerPattern):
+    self.bayer_pattern = bayer_pattern
+
+  def process(self, image: torch.Tensor) -> torch.Tensor:
+    return bilinear5x5_demosaic(image, self.bayer_pattern)
+
+
 
 def create_ppg(
     device: torch.device,
@@ -37,6 +45,10 @@ def create_rcd(
     width, height = image_size
     return extension.RCD(device, width, height, bayer_pattern, input_scale, output_scale)
 
+def create_bilinear(
+    bayer_pattern: extension.BayerPattern
+) -> Bilinear5x5:
+    return Bilinear5x5(bayer_pattern)
 
 def create_postprocess(
     device: torch.device,
@@ -127,6 +139,9 @@ def bilinear5x5_demosaic(image: torch.Tensor, bayer_pattern: extension.BayerPatt
         Demosaiced RGB image tensor (H, W, 3)
     """
     return extension.bilinear5x5_demosaic(image, bayer_pattern)
+
+
+patterns = dict(extension.BayerPattern.__members__)
 
 
 # Re-export the BayerPattern enum from extension for convenience

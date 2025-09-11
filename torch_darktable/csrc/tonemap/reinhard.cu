@@ -3,6 +3,7 @@
 #include "../reduction.h"
 #include <torch/extension.h>
 #include <cuda_runtime.h>
+#include <vector>
 
 // Reinhard tone mapping kernel
 __global__ void reinhard_tonemap_kernel(
@@ -58,8 +59,8 @@ __global__ void reinhard_tonemap_kernel(
 }
 
 torch::Tensor reinhard_tonemap(
-    torch::Tensor image,
-    torch::Tensor metrics,
+    const torch::Tensor& image,
+    const torch::Tensor& metrics,
     float gamma,
     float intensity,
     float light_adapt
@@ -163,7 +164,7 @@ __global__ void compute_metrics_kernel(
     reduce_max(log_gray, &metrics[3]);     // log_bounds_max
 }
 
-torch::Tensor compute_image_bounds(torch::Tensor image, int stride) {
+torch::Tensor compute_image_bounds(const torch::Tensor& image, int stride) {
     TORCH_CHECK(image.device().is_cuda(), "Input must be on CUDA device");
     TORCH_CHECK(image.dtype() == torch::kFloat32, "Input must be float32");
     TORCH_CHECK(image.dim() == 3 && image.size(2) == 3, "Input must be (H, W, 3)");
@@ -192,47 +193,67 @@ torch::Tensor compute_image_bounds(torch::Tensor image, int stride) {
     return bounds;
 }
 
-torch::Tensor compute_image_metrics(torch::Tensor image, int stride, float min_gray) {
-    TORCH_CHECK(image.device().is_cuda(), "Input must be on CUDA device");
-    TORCH_CHECK(image.dtype() == torch::kFloat32, "Input must be float32");
-    TORCH_CHECK(image.dim() == 3 && image.size(2) == 3, "Input must be (H, W, 3)");
+torch::Tensor compute_image_metrics(std::vector<torch::Tensor>& images, int stride, float min_gray) {
 
-    int height = image.size(0);
-    int width = image.size(1);
-    
-    // First compute bounds
-    auto bounds = compute_image_bounds(image, stride);
-    float bounds_min = bounds[0].item<float>();
-    float bounds_max = bounds[1].item<float>();
-    
     // Initialize metrics tensor: [bounds_min, bounds_max, log_bounds_min, log_bounds_max, log_mean, mean, rgb_mean_r, rgb_mean_g, rgb_mean_b]
-    auto metrics = torch::tensor({bounds_min, bounds_max, FLT_MAX, -FLT_MAX, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}, 
-                                 torch::dtype(torch::kFloat32).device(image.device()));
-    
-    int sample_width = (width + stride - 1) / stride;
-    int sample_height = (height + stride - 1) / stride;
-    int total_pixels = sample_width * sample_height;
-    
-    const dim3 block_size(16, 16);
-    const dim3 grid_size((sample_width + block_size.x - 1) / block_size.x,
-                         (sample_height + block_size.y - 1) / block_size.y);
+    auto metrics = torch::tensor({FLT_MAX, -FLT_MAX, FLT_MAX, -FLT_MAX, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}, 
+                                torch::dtype(torch::kFloat32).device(image.device()));
 
-    compute_metrics_kernel<<<grid_size, block_size>>>(
-        image.data_ptr<float>(),
-        metrics.data_ptr<float>(),
-        bounds_min,
-        bounds_max,
-        height,
-        width,
-        stride,
-        min_gray
-    );
+    for (const auto& image : images) {
+      TORCH_CHECK(image.device().is_cuda(), "Input must be on CUDA device");
+      TORCH_CHECK(image.dtype() == torch::kFloat32, "Input must be float32");
+      TORCH_CHECK(image.dim() == 3 && image.size(2) == 3, "Input must be (H, W, 3)");
 
-    CUDA_CHECK_KERNEL();
-    
+      int height = image.size(0);
+      int width = image.size(1);
+      
+      // First compute bounds
+      auto bounds = compute_image_bounds(image, stride);
+      metrics[0] = torch::min(metrics[0], bounds[0]);
+      metrics[1] = torch::max(metrics[1], bounds[1]);
+      
+      int sample_width = (width + stride - 1) / stride;
+      int sample_height = (height + stride - 1) / stride;
+      int total_pixels = sample_width * sample_height;
+      
+      const dim3 block_size(16, 16);
+      const dim3 grid_size((sample_width + block_size.x - 1) / block_size.x,
+                          (sample_height + block_size.y - 1) / block_size.y);
+
+      compute_metrics_kernel<<<grid_size, block_size>>>(
+          image.data_ptr<float>(),
+          metrics.data_ptr<float>(),
+          bounds[0].item<float>(),
+          bounds[1].item<float>(),
+          height,
+          width,
+          stride,
+          min_gray
+      );
+
+      CUDA_CHECK_KERNEL();
+    }
     // Normalize accumulated values
     float norm_factor = 1.0f / total_pixels;
     metrics.slice(0, 4, 9) *= norm_factor;  // Normalize log_mean, mean, rgb_mean
     
     return metrics;
 }
+torch::Tensor compute_image_metrics(const std::vector<torch::Tensor>& images, int stride, float min_gray) {
+    TORCH_CHECK(!images.empty(), "Images vector must not be empty");
+    auto device = images[0].device();
+    for (const auto& img : images) {
+        TORCH_CHECK(img.device() == device, "All images must be on the same device");
+        TORCH_CHECK(img.device().is_cuda(), "Inputs must be on CUDA device");
+        TORCH_CHECK(img.dtype() == torch::kFloat32, "Inputs must be float32");
+        TORCH_CHECK(img.dim() == 3 && img.size(2) == 3, "Inputs must be (H, W, 3)");
+    }
+
+    std::vector<torch::Tensor> metrics_list;
+    metrics_list.reserve(images.size());
+    for (const auto& img : images) {
+        metrics_list.push_back(compute_image_metrics(img, stride, min_gray));
+    }
+    return torch::stack(metrics_list, 0);
+}
+

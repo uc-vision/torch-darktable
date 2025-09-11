@@ -3,8 +3,10 @@
 import torch
 from dataclasses import dataclass
 from .extension import extension
+from beartype import beartype
 
 
+@beartype
 @dataclass
 class LaplacianParams:
     """Parameters for local Laplacian filtering."""
@@ -15,6 +17,7 @@ class LaplacianParams:
     clarity: float = 0.0
 
 
+@beartype
 def create_laplacian(
     device: torch.device,
     image_size: tuple[int, int],
@@ -45,6 +48,7 @@ def create_laplacian(
     )
 
 
+@beartype
 def local_laplacian_rgb(
     laplacian: "extension.Laplacian",
     input_image: torch.Tensor,
@@ -62,6 +66,7 @@ def local_laplacian_rgb(
     return laplacian.process(input_image)
 
 
+@beartype
 def create_bilateral(
     device: torch.device,
     image_size: tuple[int, int],
@@ -84,6 +89,7 @@ def create_bilateral(
     return extension.Bilateral(device, width, height, sigma_s, sigma_r)
 
 
+@beartype
 def bilateral_rgb(
     bilateral: "extension.Bilateral",
     input_image: torch.Tensor,

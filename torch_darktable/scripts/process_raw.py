@@ -29,16 +29,6 @@ def parse_args():
     return parser.parse_args()
 
 
-def histogram_intensity(bayer_image: torch.Tensor,  bins=20):
-  rggb = stack_bayer(bayer_image)
-  r, g1, g2, b = rggb.unbind(dim=0)
-
-  r_hist = torch.histc(r, bins=bins, min=0, max=1)
-  g_hist = torch.histc(torch.cat([g1, g2]), bins=bins, min=0, max=1)
-  b_hist = torch.histc(b, bins=bins, min=0, max=1)
-  return r_hist, g_hist, b_hist
-
-
 @dataclass
 class Settings:
     debayer: Literal['linear', 'rcd', 'ppg'] = 'rcd'
