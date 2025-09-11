@@ -10,19 +10,9 @@
 #include "../cuda_utils.h"
 #include <cstdint>
 
+#include "../device_math.h"
 #include "demosaic.h"
-
-
-// Inline functions instead of macros for better type safety and debugging
-__device__ __forceinline__ int fc(int row, int col, uint32_t filters) {
-    return (filters >> ((((row) << 1 & 14) + ((col) & 1)) << 1)) & 3;
-}
-
-__device__ __forceinline__ void swap_floats(float& a, float& b) {
-    const float tmp = b;
-    b = a;
-    a = tmp;
-}
+#include "bayer_device.h"
 
 
 /**
@@ -33,7 +23,7 @@ __global__ void pre_median_kernel(
     float* output, 
     int width,
     int height,
-    uint32_t filters,
+    BayerPattern pattern,
     float threshold
 ) {
     extern __shared__ float median_buffer[];
@@ -79,7 +69,7 @@ __global__ void pre_median_kernel(
     if(x >= width || y >= height) return;
 
     constexpr int lim[5] = { 0, 1, 2, 1, 0 };
-    const int c = fc(y, x, filters);
+    const int c = fc(y, x, pattern);
     float med[9];
     int cnt = 0;
 
@@ -132,7 +122,7 @@ __global__ void ppg_demosaic_green_kernel(
     float3* output,
     int width,
     int height,
-    uint32_t filters
+    BayerPattern pattern
 ) {
     extern __shared__ float green_buffer[];
     const int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -180,7 +170,7 @@ __global__ void ppg_demosaic_green_kernel(
     // process all non-green pixels
     const int row = y;
     const int col = x;
-    const int c = fc(row, col, filters);
+    const int c = fc(row, col, pattern);
     float3 color = make_float3(0.0f, 0.0f, 0.0f); // output color
 
     const float pc = centered_green[0];
@@ -242,7 +232,7 @@ __global__ void ppg_demosaic_redblue_kernel(
     float3* output,
     int width,
     int height,
-    uint32_t filters
+    BayerPattern pattern
 ) {
     extern __shared__ float3 redblue_buffer[];
     // image in contains full green and sparse r b
@@ -288,7 +278,7 @@ __global__ void ppg_demosaic_redblue_kernel(
     if(x >= width || y >= height) return;
     const int row = y;
     const int col = x;
-    const int c = fc(row, col, filters);
+    const int c = fc(row, col, pattern);
     float3 color = centered_redblue[0];
     if(x == 0 || y == 0 || x == (width-1) || y == (height-1))
     {
@@ -303,7 +293,7 @@ __global__ void ppg_demosaic_redblue_kernel(
         const float3 nb = centered_redblue[ stride];
         const float3 nl = centered_redblue[-1];
         const float3 nr = centered_redblue[ 1];
-        if(fc(row, col+1, filters) == 0) // red nb in same row
+        if(fc(row, col+1, pattern) == 0) // red nb in same row
         {
             color.z = (nt.z + nb.z + 2.0f*color.y - nt.y - nb.y)*0.5f;
             color.x = (nl.x + nr.x + 2.0f*color.y - nl.y - nr.y)*0.5f;
@@ -354,7 +344,7 @@ __global__ void border_interpolate_kernel(
     float3* output,
     int width,
     int height,
-    uint32_t filters,
+    BayerPattern pattern,
     int border
 ) {
     const int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -377,7 +367,7 @@ __global__ void border_interpolate_kernel(
     {
         if (j>=0 && i>=0 && j<height && i<width)
         {
-            const int f = fc(j,i,filters);
+            const int f = fc(j,i,pattern);
             sum[f] += fmaxf(0.0f, input[j * width + i]);
             count[f]++;
         }
@@ -388,7 +378,7 @@ __global__ void border_interpolate_kernel(
     o.y = count[1]+count[3] > 0 ? (sum[1]+sum[3])/(count[1]+count[3]) : i;
     o.z = count[2] > 0 ? sum[2]/count[2] : i;
 
-    const int f = fc(y,x,filters);
+    const int f = fc(y,x,pattern);
 
     if     (f == 0) o.x = i;
     else if(f == 1) o.y = i;
@@ -403,13 +393,13 @@ struct PPGImpl : public PPG {
     int width_;
     int height_;
     float median_threshold_;
-    uint32_t filters_;
+    BayerPattern pattern_;
 
     torch::Tensor temp_median_;
     torch::Tensor temp_buffer_;
 
-    PPGImpl(torch::Device device, int width, int height, uint32_t filters, float median_threshold)
-        : device_(device), width_(width), height_(height), filters_(filters), median_threshold_(median_threshold) {
+    PPGImpl(torch::Device device, int width, int height, BayerPattern pattern, float median_threshold)
+        : device_(device), width_(width), height_(height), pattern_(pattern), median_threshold_(median_threshold) {
 
         const auto buffer_opts = torch::TensorOptions().dtype(torch::kFloat32).device(device);
         temp_median_ = torch::zeros({height, width}, buffer_opts);
@@ -450,25 +440,25 @@ struct PPGImpl : public PPG {
 
         border_interpolate_kernel<<<grid, block, 0, stream>>>(
             contiguous_input.data_ptr<float>(), temp_ptr,
-            width_, height_, filters_, 3);
+            width_, height_, pattern_, 3);
 
         if (median_threshold_ > 0.0f) {
 
             pre_median_kernel<<<grid, block, median_shared_size, stream>>>(
                 contiguous_input.data_ptr<float>(), temp_median_.data_ptr<float>(),
-                width_, height_, filters_, median_threshold_ / 100.0f);
+                width_, height_, pattern_, median_threshold_ / 100.0f);
 
             processing_input = temp_median_.data_ptr<float>();
         }
 
         ppg_demosaic_green_kernel<<<grid, block, green_shared_size, stream>>>(
             processing_input, temp_ptr,
-            width_, height_, filters_);
+            width_, height_, pattern_);
 
         ppg_demosaic_redblue_kernel<<<grid, block, redblue_shared_size, stream>>>(
             temp_ptr,
             reinterpret_cast<float3*>(output_buffer.data_ptr<float>()),
-            width_, height_, filters_);
+            width_, height_, pattern_);
 
         return output_buffer;
     }
@@ -480,7 +470,7 @@ struct PPGImpl : public PPG {
     float get_median_threshold() const override { return median_threshold_; }
 };
 
-std::shared_ptr<PPG> create_ppg(torch::Device device, int width, int height, uint32_t filters, 
-  float median_threshold) {
-    return std::make_shared<PPGImpl>(device, width, height, filters, median_threshold);
+std::shared_ptr<PPG> create_ppg(torch::Device device, 
+  int width, int height, BayerPattern pattern, float median_threshold) {
+    return std::make_shared<PPGImpl>(device, width, height, pattern, median_threshold);
 }

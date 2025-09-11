@@ -10,6 +10,7 @@ def _load_cuda_extension(debug=False, verbose=False):
     
     source_files = [
         "extension.cpp",
+        "debayer/bilinear.cu",
         "debayer/ppg.cu",
         "debayer/rcd.cu", 
         "debayer/postprocess.cu",

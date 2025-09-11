@@ -1,16 +1,9 @@
 """Bayer demosaicing algorithms and utilities."""
 
 import torch
-from enum import IntEnum, Enum
+from enum import Enum
 from .extension import extension
 
-
-class BayerPattern(IntEnum):
-    """Bayer pattern enumeration for demosaicing."""
-    RGGB = 0x94949494
-    BGGR = 0x16161616
-    GRBG = 0x61616161
-    GBRG = 0x49494949
 
 
 class Packed12Format(Enum):
@@ -21,20 +14,20 @@ class Packed12Format(Enum):
 def create_ppg(
     device: torch.device,
     image_size: tuple[int, int],
-    bayer_pattern: BayerPattern,
+    bayer_pattern: extension.BayerPattern,
     median_threshold: float = 0.0
 ) -> extension.PPG:
     """
     Create a PPG demosaic object.
     """
     width, height = image_size
-    return extension.PPG(device, width, height, int(bayer_pattern), median_threshold)
+    return extension.PPG(device, width, height, bayer_pattern, median_threshold)
 
 
 def create_rcd(
     device: torch.device,
     image_size: tuple[int, int],
-    bayer_pattern: BayerPattern,
+    bayer_pattern: extension.BayerPattern,
     input_scale: float = 1.0,
     output_scale: float = 1.0
 ) -> extension.RCD:
@@ -42,13 +35,13 @@ def create_rcd(
     Create an RCD demosaic object.
     """
     width, height = image_size
-    return extension.RCD(device, width, height, int(bayer_pattern), input_scale, output_scale)
+    return extension.RCD(device, width, height, bayer_pattern, input_scale, output_scale)
 
 
 def create_postprocess(
     device: torch.device,
     image_size: tuple[int, int],
-    bayer_pattern: BayerPattern,
+    bayer_pattern: extension.BayerPattern,
     color_smoothing_passes: int = 0,
     green_eq_local: bool = False,
     green_eq_global: bool = False,
@@ -62,7 +55,7 @@ def create_postprocess(
         device,
         width,
         height,
-        int(bayer_pattern),
+        bayer_pattern,
         color_smoothing_passes,
         green_eq_local,
         green_eq_global,
@@ -122,9 +115,27 @@ decode12_half = extension.decode12_half
 decode12_u16 = extension.decode12_u16
 
 
+def bilinear5x5_demosaic(image: torch.Tensor, bayer_pattern: extension.BayerPattern) -> torch.Tensor:
+    """
+    Apply 5x5 bilinear demosaic to Bayer image.
+    
+    Args:
+        image: Input Bayer image tensor (H, W, 1) 
+        bayer_pattern: Bayer pattern enumeration
+        
+    Returns:
+        Demosaiced RGB image tensor (H, W, 3)
+    """
+    return extension.bilinear5x5_demosaic(image, bayer_pattern)
+
+
+# Re-export the BayerPattern enum from extension for convenience
+BayerPattern = extension.BayerPattern
+
 __all__ = [
     "BayerPattern", "Packed12Format",
     "create_ppg", "create_rcd", "create_postprocess",
+    "bilinear5x5_demosaic",
     "encode12", "decode12",
     "encode12_u16", "encode12_float", "decode12_float", "decode12_half", "decode12_u16",
 ]

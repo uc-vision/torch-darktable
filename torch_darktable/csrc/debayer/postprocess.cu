@@ -12,19 +12,9 @@
 #include <algorithm>
 
 #include "demosaic.h"
+#include "bayer_device.h"
+#include "../reduction.h"
 
-// FC inline function for Bayer pattern (from darktable)
-__device__ __forceinline__ int FC(int row, int col, uint32_t filters) {
-    return (filters >> ((((row) << 1 & 14) + ((col) & 1)) << 1)) & 3;
-}
-
-// Compare and swap inline function for sorting network
-__device__ __forceinline__ void cas(float& a, float& b) {
-    float x = a;
-    int c = a > b;
-    a = c ? b : a;
-    b = c ? x : b;
-}
 
 /**
  * Color smoothing using 3x3 median filter
@@ -75,74 +65,14 @@ __global__ void color_smoothing_kernel(
 
     // re-position buffer
     float3* centered_buffer = smoothing_buffer + (lyid + 1) * buffwd + lxid + 1;
-
     float3 o = centered_buffer[0];
 
-    // 3x3 median for R (R-G difference)
-    float s0 = centered_buffer[-buffwd - 1].x - centered_buffer[-buffwd - 1].y;
-    float s1 = centered_buffer[-buffwd].x - centered_buffer[-buffwd].y;
-    float s2 = centered_buffer[-buffwd + 1].x - centered_buffer[-buffwd + 1].y;
-    float s3 = centered_buffer[-1].x - centered_buffer[-1].y;
-    float s4 = centered_buffer[0].x - centered_buffer[0].y;
-    float s5 = centered_buffer[1].x - centered_buffer[1].y;
-    float s6 = centered_buffer[buffwd - 1].x - centered_buffer[buffwd - 1].y;
-    float s7 = centered_buffer[buffwd].x - centered_buffer[buffwd].y;
-    float s8 = centered_buffer[buffwd + 1].x - centered_buffer[buffwd + 1].y;
+    // Median of R-G and B-G differences across 3x3 neighborhood
+    float r_median = diff_median3x3<0, 1>(centered_buffer, buffwd); // R-G
+    float b_median = diff_median3x3<2, 1>(centered_buffer, buffwd); // B-G
 
-    cas(s1, s2);
-    cas(s4, s5);
-    cas(s7, s8);
-    cas(s0, s1);
-    cas(s3, s4);
-    cas(s6, s7);
-    cas(s1, s2);
-    cas(s4, s5);
-    cas(s7, s8);
-    cas(s0, s3);
-    cas(s5, s8);
-    cas(s4, s7);
-    cas(s3, s6);
-    cas(s1, s4);
-    cas(s2, s5);
-    cas(s4, s7);
-    cas(s4, s2);
-    cas(s6, s4);
-    cas(s4, s2);
-
-    o.x = fmaxf(s4 + o.y, 0.0f);
-
-    // 3x3 median for B (B-G difference)
-    s0 = centered_buffer[-buffwd - 1].z - centered_buffer[-buffwd - 1].y;
-    s1 = centered_buffer[-buffwd].z - centered_buffer[-buffwd].y;
-    s2 = centered_buffer[-buffwd + 1].z - centered_buffer[-buffwd + 1].y;
-    s3 = centered_buffer[-1].z - centered_buffer[-1].y;
-    s4 = centered_buffer[0].z - centered_buffer[0].y;
-    s5 = centered_buffer[1].z - centered_buffer[1].y;
-    s6 = centered_buffer[buffwd - 1].z - centered_buffer[buffwd - 1].y;
-    s7 = centered_buffer[buffwd].z - centered_buffer[buffwd].y;
-    s8 = centered_buffer[buffwd + 1].z - centered_buffer[buffwd + 1].y;
-
-    cas(s1, s2);
-    cas(s4, s5);
-    cas(s7, s8);
-    cas(s0, s1);
-    cas(s3, s4);
-    cas(s6, s7);
-    cas(s1, s2);
-    cas(s4, s5);
-    cas(s7, s8);
-    cas(s0, s3);
-    cas(s5, s8);
-    cas(s4, s7);
-    cas(s3, s6);
-    cas(s1, s4);
-    cas(s2, s5);
-    cas(s4, s7);
-    cas(s4, s2);
-    cas(s6, s4);
-    cas(s4, s2);
-
-    o.z = fmaxf(s4 + o.y, 0.0f);
+    o.x = fmaxf(r_median + o.y, 0.0f);
+    o.z = fmaxf(b_median + o.y, 0.0f);
 
     output[y * width + x] = make_float3(fmaxf(o.x, 0.0f), fmaxf(o.y, 0.0f), fmaxf(o.z, 0.0f));
 }
@@ -156,7 +86,7 @@ __global__ void green_eq_local_kernel(
     float3* output,
     int width,
     int height,
-    uint32_t filters,
+    BayerPattern pattern,
     float threshold
 ) {
     extern __shared__ float green_eq_buffer[];
@@ -203,7 +133,7 @@ __global__ void green_eq_local_kernel(
 
     if(x >= width || y >= height) return;
 
-    const int c = FC(y, x, filters);
+    const int c = fc(y, x, pattern);
     const float maximum = 1.0f;
     float3 pixel = input[y * width + x];
     float o = pixel.y; // Start with green channel
@@ -247,7 +177,7 @@ __global__ void green_eq_global_reduce_first_kernel(
     int width,
     int height,
     float2* accu,
-    uint32_t filters
+    BayerPattern pattern
 ) {
     extern __shared__ float2 reduce_buffer[];
     
@@ -260,7 +190,7 @@ __global__ void green_eq_global_reduce_first_kernel(
 
     const int l = ylid * xlsz + xlid;
 
-    const int c = FC(y, x, filters);
+    const int c = fc(y, x, pattern);
 
     const int isinimage = (x < 2 * (width / 2) && y < 2 * (height / 2));
     const int isgreen1 = (c == 1 && !(y & 1));
@@ -306,7 +236,7 @@ __global__ void green_eq_global_apply_kernel(
     float3* output,
     int width,
     int height,
-    uint32_t filters,
+    BayerPattern pattern,
     float gr_ratio
 ) {
     const int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -316,7 +246,7 @@ __global__ void green_eq_global_apply_kernel(
 
     float3 pixel = input[y * width + x];
 
-    const int c = FC(y, x, filters);
+    const int c = fc(y, x, pattern);
     const int isgreen1 = (c == 1 && !(y & 1));
 
     pixel.y *= (isgreen1 ? gr_ratio : 1.0f);
@@ -332,7 +262,7 @@ __global__ void green_eq_global_apply_kernel(
 
 // PostProcess Implementation
 struct PostProcessImpl : public PostProcess {
-    uint32_t filters_;
+    BayerPattern pattern_;
     int color_smoothing_passes_;
     bool green_eq_local_;
     bool green_eq_global_;
@@ -352,12 +282,12 @@ struct PostProcessImpl : public PostProcess {
 
     
 
-    PostProcessImpl(torch::Device device, int width, int height, uint32_t filters,
+    PostProcessImpl(torch::Device device, int width, int height, BayerPattern pattern,
       int color_smoothing_passes,
       bool green_eq_local,
       bool green_eq_global,
       float green_eq_threshold)
-        : device_(device), width_(width), height_(height), filters_(filters),
+        : device_(device), width_(width), height_(height), pattern_(pattern),
           color_smoothing_passes_(color_smoothing_passes),
           green_eq_local_(green_eq_local), green_eq_global_(green_eq_global),
           green_eq_threshold_(green_eq_threshold) {
@@ -426,7 +356,7 @@ struct PostProcessImpl : public PostProcess {
 
             green_eq_global_reduce_first_kernel<<<grid_, block_, reduce_shared_size, stream>>>(
                 buffers[current], width_, height_,
-                reduce_ptr, filters_);
+                reduce_ptr, pattern_);
 
             // Sum reduction using PyTorch
             auto final_result = reduce_buffer_.sum(0);
@@ -438,7 +368,7 @@ struct PostProcessImpl : public PostProcess {
             // Apply global correction
             green_eq_global_apply_kernel<<<grid_, block_, 0, stream>>>(
                 buffers[current], buffers[!current],
-                width_, height_, filters_, gr_ratio);
+                width_, height_, pattern_, gr_ratio);
 
             // Swap buffer pointers (no data copy)
             current = not current;
@@ -450,7 +380,7 @@ struct PostProcessImpl : public PostProcess {
 
             green_eq_local_kernel<<<grid_, block_, green_eq_shared_size, stream>>>(
                 buffers[current], buffers[!current],
-                width_, height_, filters_, green_eq_threshold_ / 100.);
+                width_, height_, pattern_, green_eq_threshold_ / 100.);
 
             // Swap buffer pointers (no data copy)
             current = not current;
@@ -471,12 +401,12 @@ struct PostProcessImpl : public PostProcess {
 
 std::shared_ptr<PostProcess> create_postprocess(torch::Device device,
     int width, int height,
-    uint32_t filters,
+    BayerPattern pattern,
     int color_smoothing_passes,
     bool green_eq_local,
     bool green_eq_global,
     float green_eq_threshold) {
-    return std::make_shared<PostProcessImpl>(device, width, height, filters,
+    return std::make_shared<PostProcessImpl>(device, width, height, pattern,
       color_smoothing_passes,
       green_eq_local,
       green_eq_global,

@@ -5,7 +5,7 @@ from typing import Callable
 
 from torch_darktable import BayerPattern
 from torch_darktable.utilities import load_image, rgb_to_bayer
-from torch_darktable import create_ppg, create_rcd, create_postprocess, create_laplacian, compute_luminance, create_bilateral
+from torch_darktable import create_ppg, create_rcd, create_postprocess, create_laplacian, compute_luminance, create_bilateral, bilinear5x5_demosaic
 
 
 def benchmark(name: str, func: Callable, *args, warmup_iters: int = 5, bench_iters: int = 50) -> float:
@@ -19,10 +19,12 @@ def benchmark(name: str, func: Callable, *args, warmup_iters: int = 5, bench_ite
     start_event = torch.cuda.Event(enable_timing=True)
     end_event = torch.cuda.Event(enable_timing=True)
 
-    start_event.record()
+    stream = torch.cuda.current_stream()
+
+    start_event.record(stream=stream)
     for _ in range(bench_iters):
         func(*args)
-    end_event.record()
+    end_event.record(stream=stream)
 
     torch.cuda.synchronize()
     elapsed_ms = start_event.elapsed_time(end_event)
@@ -54,7 +56,7 @@ def run_benchmark(image_path: Path, pattern: BayerPattern, warmup_iters: int = 5
     rcd_alg = create_rcd(bayer_input.device, (width, height), pattern)
     color_smooth_alg = create_postprocess(bayer_input.device, (width, height), pattern, color_smoothing_passes=3)
     green_eq_alg = create_postprocess(bayer_input.device, (width, height), pattern, green_eq_local=True, green_eq_global=True)
-
+    
     laplacian_alg = create_laplacian(bayer_input.device, (width, height))
     bilateral_alg = create_bilateral(bayer_input.device, (width, height), sigma_s=2.0, sigma_r=0.2, detail=0.2)
 
@@ -62,6 +64,7 @@ def run_benchmark(image_path: Path, pattern: BayerPattern, warmup_iters: int = 5
 
     benchmark("PPG", ppg_alg.process, bayer_input, warmup_iters=warmup_iters, bench_iters=bench_iters)
     benchmark("RCD", rcd_alg.process, bayer_input, warmup_iters=warmup_iters, bench_iters=bench_iters)
+    benchmark("Bilinear 5x5", bilinear5x5_demosaic, bayer_input, pattern, warmup_iters=warmup_iters, bench_iters=bench_iters)
 
     print()
 
@@ -76,6 +79,7 @@ def run_benchmark(image_path: Path, pattern: BayerPattern, warmup_iters: int = 5
     mono_tensor = compute_luminance(rgb_tensor)
     benchmark("Laplacian", laplacian_alg.process, mono_tensor, warmup_iters=warmup_iters, bench_iters=bench_iters)
     benchmark("Bilateral", bilateral_alg.process, mono_tensor, warmup_iters=warmup_iters, bench_iters=bench_iters)
+    benchmark("Bilateral Denoise RGB", bilateral_alg.process_denoise, rgb_tensor, warmup_iters=warmup_iters, bench_iters=bench_iters)
 
 
 

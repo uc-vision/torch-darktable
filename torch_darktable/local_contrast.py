@@ -65,8 +65,8 @@ def local_laplacian_rgb(
 def create_bilateral(
     device: torch.device,
     image_size: tuple[int, int],
-    spatial_sigma: float,
-    range_sigma: float,
+    sigma_s: float,
+    sigma_r: float,
 ) -> "extension.Bilateral":
     """
     Create a bilateral filter object.
@@ -74,14 +74,14 @@ def create_bilateral(
     Args:
         device: CUDA device to use
         image_size: (width, height) of the image
-        spatial_sigma: Spatial standard deviation
-        range_sigma: Range standard deviation
+        sigma_s: Spatial standard deviation
+        sigma_r: Luminance range standard deviation (determines subdivisions)
         
     Returns:
         Bilateral algorithm object
     """
     width, height = image_size
-    return extension.Bilateral(device, width, height, spatial_sigma, range_sigma)
+    return extension.Bilateral(device, width, height, sigma_s, sigma_r)
 
 
 def bilateral_rgb(
@@ -89,29 +89,20 @@ def bilateral_rgb(
     input_image: torch.Tensor,
     *,
     detail: float | None = None,
-    denoise_amount: float | None = None,
+    denoise: bool = False,
 ) -> torch.Tensor:
     luminance = extension.compute_luminance(input_image)
     L = luminance
-    if denoise_amount is not None and denoise_amount > 0.0:
-        L = bilateral.process_denoise(L, float(denoise_amount))
+    if denoise:
+        L = bilateral.process_denoise(L, float(denoise))
     if detail is not None and detail != 0.0:
         L = bilateral.process_contrast(L, float(detail))
     return extension.modify_luminance(input_image, L)
 
 
-def bilateral_denoise_rgb(
-    bilateral: "extension.Bilateral",
-    input_image: torch.Tensor,
-) -> torch.Tensor:
-    """
-    Edge-aware denoise using bilateral smoothing on luminance.
-    """
-    return bilateral_rgb(bilateral, input_image, denoise_amount=1.0)
-
 
 __all__ = [
     "LaplacianParams", 
     "create_laplacian", "local_laplacian_rgb",
-    "create_bilateral", "bilateral_rgb", "bilateral_denoise_rgb"
+    "create_bilateral", "bilateral_rgb",
 ]

@@ -12,16 +12,18 @@
 
 // Forward declarations for implementations in kernel files
 std::shared_ptr<PPG> create_ppg(torch::Device device, int width, int height, 
-  uint32_t filters, float median_threshold = 0.0f);
+  BayerPattern pattern, float median_threshold = 0.0f);
 
 std::shared_ptr<RCD> create_rcd(torch::Device device, int width, int height, 
-  uint32_t filters, float input_scale = 1.0f, float output_scale = 1.0f);
+  BayerPattern pattern, float input_scale = 1.0f, float output_scale = 1.0f);
 
 std::shared_ptr<PostProcess> create_postprocess(torch::Device device,
-  int width, int height, uint32_t filters,
+  int width, int height, BayerPattern pattern,
   int color_smoothing_passes,
   bool green_eq_local, bool green_eq_global,
   float green_eq_threshold);
+
+torch::Tensor bilinear5x5_demosaic(const torch::Tensor& input, BayerPattern pattern);
 
 std::shared_ptr<Laplacian> create_laplacian(torch::Device device, 
   int width, int height,
@@ -41,7 +43,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     py::class_<PPG, std::shared_ptr<PPG>>(m, "PPG")
         .def(py::init(&create_ppg), "Create PPG demosaic",
              py::arg("device"), py::arg("width"), py::arg("height"),
-             py::arg("filters"), py::arg("median_threshold") = 0.0f)
+             py::arg("pattern"), py::arg("median_threshold") = 0.0f)
         .def("process", &PPG::process, "Process image with PPG algorithm",
              py::arg("input"))
         .def_property("median_threshold", &PPG::get_median_threshold, &PPG::set_median_threshold, "Median threshold parameter");
@@ -49,7 +51,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     py::class_<RCD, std::shared_ptr<RCD>>(m, "RCD")
         .def(py::init(&create_rcd), "Create RCD demosaic",
              py::arg("device"), py::arg("width"), py::arg("height"),
-             py::arg("filters"), py::arg("input_scale") = 1.0f, py::arg("output_scale") = 1.0f)
+             py::arg("pattern"), py::arg("input_scale") = 1.0f, py::arg("output_scale") = 1.0f)
         .def("process", &RCD::process, "Process image with RCD algorithm",
              py::arg("input"))
         .def_property("input_scale", &RCD::get_input_scale, &RCD::set_input_scale, "Input scaling")
@@ -58,7 +60,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     py::class_<PostProcess, std::shared_ptr<PostProcess>>(m, "PostProcess")
         .def(py::init(&create_postprocess), "Create post-process algorithm",
              py::arg("device"), py::arg("width"), py::arg("height"),
-             py::arg("filters"), py::arg("color_smoothing_passes") = 0,
+             py::arg("pattern"), py::arg("color_smoothing_passes") = 0,
              py::arg("green_eq_local") = false, py::arg("green_eq_global") = false,
              py::arg("green_eq_threshold") = 0.04f)
         .def("process", &PostProcess::process, "Process image with post-processing",
@@ -144,5 +146,16 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
           py::arg("light_adapt") = 0.8f);
     m.def("aces_tonemap", &aces_tonemap, "Apply ACES tone mapping",
           py::arg("image"), py::arg("gamma") = 2.2f);
+
+    // Expose BayerPattern enum
+    py::enum_<BayerPattern>(m, "BayerPattern")
+        .value("RGGB", BayerPattern::RGGB)
+        .value("BGGR", BayerPattern::BGGR)
+        .value("GRBG", BayerPattern::GRBG)
+        .value("GBRG", BayerPattern::GBRG);
+
+    // Bilinear 5x5 demosaic function
+    m.def("bilinear5x5_demosaic", &bilinear5x5_demosaic, "Apply 5x5 bilinear demosaic",
+          py::arg("input"), py::arg("pattern"));
 
 }

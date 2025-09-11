@@ -21,6 +21,10 @@ __device__ __host__ inline int2 operator*(int scalar, const int2& a) {
     return make_int2(scalar * a.x, scalar * a.y);
 }
 
+__device__ __host__ inline int2 operator*(const int2& a, int scalar) {
+    return make_int2(a.x * scalar, a.y * scalar);
+}
+
 __device__ __host__ inline int2 operator/(const int2& a, int scalar) {
     return make_int2(a.x / scalar, a.y / scalar);
 }
@@ -42,10 +46,11 @@ __device__ __forceinline__ int2 get_thread_pos() {
     return make_int2(blockIdx.x * blockDim.x + threadIdx.x, blockIdx.y * blockDim.y + threadIdx.y);
 }
 
-// Inline function instead of macro for better type safety and debugging
-__device__ __forceinline__ int fc(int row, int col, uint32_t filters) {
-    return (filters >> ((((row) << 1 & 14) + ((col) & 1)) << 1)) & 3;
+__device__ __forceinline__ int clamp_int(int v, int lo, int hi) {
+  return v < lo ? lo : (v > hi ? hi : v);
 }
+
+
 
 
 // Helper functions
@@ -283,5 +288,9 @@ __device__ __forceinline__ float rgb_to_gray(float3 rgb) {
     return rgb.x * 0.299f + rgb.y * 0.587f + rgb.z * 0.114f;
 }
 
-// Forward declaration of shared function from ppg_kernels.cu
-__global__ void border_interpolate_kernel(float* input, float3* output, int width, int height, uint32_t filters, int border);
+
+__device__ __forceinline__ void swap_floats(float& a, float& b) {
+  const float tmp = b;
+  b = a;
+  a = tmp;
+}

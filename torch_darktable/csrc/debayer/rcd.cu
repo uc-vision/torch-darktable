@@ -13,6 +13,8 @@
 #include "../device_math.h"
 
 #include "demosaic.h"
+#include "bayer_device.h"
+
 
 
 static __device__ __forceinline__ float calcBlendFactor(float val, float threshold)
@@ -26,14 +28,14 @@ static __device__ __forceinline__ float calcBlendFactor(float val, float thresho
 
 // Populate cfa and rgb data by normalized input
 __global__ void rcd_populate_kernel(float* input, float* cfa, float* rgb0, float* rgb1, float* rgb2, 
-                                   int width, int height, uint32_t filters, float scale)
+                                   int width, int height, BayerPattern pattern, float scale)
 {
     const int col = blockIdx.x * blockDim.x + threadIdx.x;
     const int row = blockIdx.y * blockDim.y + threadIdx.y;
     if(col >= width || row >= height) return;
     
     const float val = scale * fmaxf(0.0f, input[row * width + col]);
-    const int color = fc(row, col, filters);
+    const int color = fc(row, col, pattern);
 
     float* rgbcol = rgb0;
     if(color == 1) rgbcol = rgb1;
@@ -88,10 +90,10 @@ __global__ void rcd_step_1_2_kernel(float* VH_dir, float* v_diff, float* h_diff,
 }
 
 // Step 2.1: Low pass filter incorporating green, red and blue local samples from the raw data
-__global__ void rcd_step_2_1_kernel(float* lpf, float* cfa, int width, int height, uint32_t filters)
+__global__ void rcd_step_2_1_kernel(float* lpf, float* cfa, int width, int height, BayerPattern pattern)
 {
     const int row = 2 + blockIdx.y * blockDim.y + threadIdx.y;
-    const int col = 2 + (fc(row, 0, filters) & 1) + 2 * (blockIdx.x * blockDim.x + threadIdx.x);
+    const int col = 2 + (fc(row, 0, pattern) & 1) + 2 * (blockIdx.x * blockDim.x + threadIdx.x);
     if((col > width - 2) || (row > height - 2)) return;
     
     const int idx = row * width + col;
@@ -103,10 +105,10 @@ __global__ void rcd_step_2_1_kernel(float* lpf, float* cfa, int width, int heigh
 
 // Step 3.1: Populate the green channel at blue and red CFA positions
 __global__ void rcd_step_3_1_kernel(float* lpf, float* cfa, float* rgb1, float* VH_Dir, 
-                                   int width, int height, uint32_t filters)
+                                   int width, int height, BayerPattern pattern)
 {
     const int row = 4 + blockIdx.y * blockDim.y + threadIdx.y;
-    const int col = 4 + (fc(row, 0, filters) & 1) + 2 * (blockIdx.x * blockDim.x + threadIdx.x);
+    const int col = 4 + (fc(row, 0, pattern) & 1) + 2 * (blockIdx.x * blockDim.x + threadIdx.x);
     if((col > width - 5) || (row > height - 5)) return;
     
     const int idx = row * width + col;
@@ -145,7 +147,7 @@ __global__ void rcd_step_3_1_kernel(float* lpf, float* cfa, float* rgb1, float* 
 
 // Step 4.1: Calculate the square of the P/Q diagonals color difference high pass filter
 __global__ void rcd_step_4_1_kernel(float* cfa, float* p_diff, float* q_diff, 
-                                   int width, int height, uint32_t filters)
+                                   int width, int height, BayerPattern pattern)
 {
     const int row = 3 + blockIdx.y * blockDim.y + threadIdx.y;
     const int col = 3 + 2 * (blockIdx.x * blockDim.x + threadIdx.x);
@@ -162,10 +164,10 @@ __global__ void rcd_step_4_1_kernel(float* cfa, float* p_diff, float* q_diff,
 
 // Step 4.2: Calculate P/Q diagonals local discrimination strength
 __global__ void rcd_step_4_2_kernel(float* PQ_dir, float* p_diff, float* q_diff, 
-                                   int width, int height, uint32_t filters)
+                                    int width, int height, BayerPattern pattern)
 {
     const int row = 2 + blockIdx.y * blockDim.y + threadIdx.y;
-    const int col = 2 + (fc(row, 0, filters) & 1) + 2 * (blockIdx.x * blockDim.x + threadIdx.x);
+    const int col = 2 + (fc(row, 0, pattern) & 1) + 2 * (blockIdx.x * blockDim.x + threadIdx.x);
     if((col > width - 3) || (row > height - 3)) return;
     
     const int idx = row * width + col;
@@ -181,13 +183,13 @@ __global__ void rcd_step_4_2_kernel(float* PQ_dir, float* p_diff, float* q_diff,
 
 // Step 5.1: Populate the red and blue channels at blue and red CFA positions
 __global__ void rcd_step_5_1_kernel(float* PQ_dir, float* rgb0, float* rgb1, float* rgb2, 
-                                   int width, int height, uint32_t filters)
+                                   int width, int height, BayerPattern pattern)
 {
     const int row = 4 + blockIdx.y * blockDim.y + threadIdx.y;
-    const int col = 4 + (fc(row, 0, filters) & 1) + 2 * (blockIdx.x * blockDim.x + threadIdx.x);
+    const int col = 4 + (fc(row, 0, pattern) & 1) + 2 * (blockIdx.x * blockDim.x + threadIdx.x);
     if((col > width - 4) || (row > height - 4)) return;
 
-    const int color = 2 - fc(row, col, filters);
+    const int color = 2 - fc(row, col, pattern);
 
     float* rgbc = rgb0;
     if(color == 1) rgbc = rgb1;
@@ -223,10 +225,10 @@ __global__ void rcd_step_5_1_kernel(float* PQ_dir, float* rgb0, float* rgb1, flo
 
 // Step 5.2: Populate the red and blue channels at green CFA positions
 __global__ void rcd_step_5_2_kernel(float* VH_dir, float* rgb0, float* rgb1, float* rgb2, 
-                                   int width, int height, uint32_t filters)
+                                    int width, int height, BayerPattern pattern)
 {
     const int row = 4 + blockIdx.y * blockDim.y + threadIdx.y;
-    const int col = 4 + (fc(row, 1, filters) & 1) + 2 * (blockIdx.x * blockDim.x + threadIdx.x);
+    const int col = 4 + (fc(row, 1, pattern) & 1) + 2 * (blockIdx.x * blockDim.x + threadIdx.x);
     if((col > width - 4) || (row > height - 4)) return;
 
     const int idx = row * width + col;
@@ -281,7 +283,7 @@ __global__ void rcd_step_5_2_kernel(float* VH_dir, float* rgb0, float* rgb1, flo
 
 // Border interpolation kernels
 __global__ void rcd_border_green_kernel(float* input, float3* output, int width, int height,
-                                       uint32_t filters, int border)
+                                       BayerPattern pattern, int border)
 {
     extern __shared__ float green_buffer[];
     const int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -329,7 +331,7 @@ __global__ void rcd_border_green_kernel(float* input, float3* output, int width,
     // process all non-green pixels
     const int row = y;
     const int col = x;
-    const int c = fc(row, col, filters);
+    const int c = fc(row, col, pattern);
     float3 color = make_float3(0.0f, 0.0f, 0.0f); // output color
 
     const float pc = centered_buffer[0];
@@ -383,7 +385,7 @@ __global__ void rcd_border_green_kernel(float* input, float3* output, int width,
 }
 
 __global__ void rcd_border_redblue_kernel(float3* input, float3* output, int width, int height,
-                                         uint32_t filters, int border)
+                                         BayerPattern pattern, int border)
 {
     extern __shared__ float3 redblue_buffer[];
     // image in contains full green and sparse r b
@@ -435,7 +437,7 @@ __global__ void rcd_border_redblue_kernel(float3* input, float3* output, int wid
 
     const int row = y;
     const int col = x;
-    const int c = fc(row, col, filters);
+    const int c = fc(row, col, pattern);
     float3 color = centered_buffer[0];
     if(row > 0 && col > 0 && col < width - 1 && row < height - 1)
     {
@@ -446,7 +448,7 @@ __global__ void rcd_border_redblue_kernel(float3* input, float3* output, int wid
             const float3 nb = centered_buffer[ stride];
             const float3 nl = centered_buffer[-1];
             const float3 nr = centered_buffer[ 1];
-            if(fc(row, col+1, filters) == 0) // red nb in same row
+            if(fc(row, col+1, pattern) == 0) // red nb in same row
             {
                 color.z = (nt.z + nb.z + 2.0f*color.y - nt.y - nb.y)*0.5f;
                 color.x = (nl.x + nr.x + 2.0f*color.y - nl.y - nr.y)*0.5f;
@@ -565,7 +567,7 @@ struct RCDImpl : public RCD {
     int height_;
     float input_scale_;
     float output_scale_;
-    uint32_t filters_;
+    BayerPattern pattern_;
 
     torch::Device device_;
 
@@ -579,8 +581,8 @@ struct RCDImpl : public RCD {
     torch::Tensor HQ_diff_;
     torch::Tensor lpf_PQ_;
 
-    RCDImpl(torch::Device device, int width, int height, uint32_t filters, float input_scale, float output_scale)
-        : device_(device), width_(width), height_(height), filters_(filters),
+    RCDImpl(torch::Device device, int width, int height, BayerPattern pattern, float input_scale, float output_scale)
+        : device_(device), width_(width), height_(height), pattern_(pattern),
           input_scale_(input_scale), output_scale_(output_scale) {
 
         const auto buffer_opts = torch::TensorOptions().dtype(torch::kFloat32).device(device);
@@ -616,24 +618,24 @@ struct RCDImpl : public RCD {
 
         border_interpolate_kernel<<<grid, block, 0, stream>>>(
             contiguous_input.data_ptr<float>(), reinterpret_cast<float3*>(output_buffer_.data_ptr<float>()),
-            width_, height_, filters_, 3);
+            width_, height_, pattern_, 3);
 
         const int green_stride = block.x + 2*3;
         const int green_shared_size = green_stride * (block.y + 2*3) * sizeof(float);
         rcd_border_green_kernel<<<grid, block, green_shared_size, stream>>>(
             contiguous_input.data_ptr<float>(), reinterpret_cast<float3*>(output_buffer_.data_ptr<float>()),
-            width_, height_, filters_, 32);
+            width_, height_, pattern_, 32);
 
         const int redblue_stride = block.x + 2;
         const int redblue_shared_size = redblue_stride * (block.y + 2) * sizeof(float3);
         rcd_border_redblue_kernel<<<grid, block, redblue_shared_size, stream>>>(
             reinterpret_cast<float3*>(output_buffer_.data_ptr<float>()),
             reinterpret_cast<float3*>(output_buffer_.data_ptr<float>()),
-            width_, height_, filters_, 16);
+            width_, height_, pattern_, 16);
 
         rcd_populate_kernel<<<grid, block, 0, stream>>>(
             contiguous_input.data_ptr<float>(), cfa_.data_ptr<float>(), rgb0_.data_ptr<float>(),
-            rgb1_.data_ptr<float>(), rgb2_.data_ptr<float>(), width_, height_, filters_, input_scale_);
+            rgb1_.data_ptr<float>(), rgb2_.data_ptr<float>(), width_, height_, pattern_, input_scale_);
 
         rcd_step_1_1_kernel<<<grid, block, 0, stream>>>(
             cfa_.data_ptr<float>(), VP_diff_.data_ptr<float>(), HQ_diff_.data_ptr<float>(), width_, height_);
@@ -642,27 +644,27 @@ struct RCDImpl : public RCD {
             VH_dir_.data_ptr<float>(), VP_diff_.data_ptr<float>(), HQ_diff_.data_ptr<float>(), width_, height_);
 
         rcd_step_2_1_kernel<<<grid_half, block, 0, stream>>>(
-            lpf_PQ_.data_ptr<float>(), cfa_.data_ptr<float>(), width_, height_, filters_);
+            lpf_PQ_.data_ptr<float>(), cfa_.data_ptr<float>(), width_, height_, pattern_);
 
         rcd_step_3_1_kernel<<<grid_half, block, 0, stream>>>(
             lpf_PQ_.data_ptr<float>(), cfa_.data_ptr<float>(), rgb1_.data_ptr<float>(),
-            VH_dir_.data_ptr<float>(), width_, height_, filters_);
+            VH_dir_.data_ptr<float>(), width_, height_, pattern_);
 
         rcd_step_4_1_kernel<<<grid_half, block, 0, stream>>>(
             cfa_.data_ptr<float>(), VP_diff_.data_ptr<float>(), HQ_diff_.data_ptr<float>(),
-            width_, height_, filters_);
+            width_, height_, pattern_);
 
         rcd_step_4_2_kernel<<<grid_half, block, 0, stream>>>(
             lpf_PQ_.data_ptr<float>(), VP_diff_.data_ptr<float>(), HQ_diff_.data_ptr<float>(),
-            width_, height_, filters_);
+            width_, height_, pattern_);
 
         rcd_step_5_1_kernel<<<grid_half, block, 0, stream>>>(
             lpf_PQ_.data_ptr<float>(), rgb0_.data_ptr<float>(), rgb1_.data_ptr<float>(),
-            rgb2_.data_ptr<float>(), width_, height_, filters_);
+            rgb2_.data_ptr<float>(), width_, height_, pattern_);
 
         rcd_step_5_2_kernel<<<grid_half, block, 0, stream>>>(
             VH_dir_.data_ptr<float>(), rgb0_.data_ptr<float>(), rgb1_.data_ptr<float>(),
-            rgb2_.data_ptr<float>(), width_, height_, filters_);
+            rgb2_.data_ptr<float>(), width_, height_, pattern_);
 
         rcd_write_output_kernel<<<grid, block, 0, stream>>>(
             reinterpret_cast<float3*>(output_buffer_.data_ptr<float>()), rgb0_.data_ptr<float>(),
@@ -680,7 +682,8 @@ struct RCDImpl : public RCD {
     float get_output_scale() const override { return output_scale_; }
 };
 
-std::shared_ptr<RCD> create_rcd(torch::Device device, int width, int height, uint32_t filters, float input_scale, float output_scale) {
-    return std::make_shared<RCDImpl>(device, width, height, filters, input_scale, output_scale);
+std::shared_ptr<RCD> create_rcd(torch::Device device, int width, int height, 
+      BayerPattern pattern, float input_scale, float output_scale) {
+    return std::make_shared<RCDImpl>(device, width, height, pattern, input_scale, output_scale);
 }
 

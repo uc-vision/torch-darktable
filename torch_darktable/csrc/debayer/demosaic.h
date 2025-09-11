@@ -4,6 +4,15 @@
 #include <torch/extension.h>
 #include <memory>
 
+enum class BayerPattern : unsigned int {
+  RGGB = 0x94949494u,
+  BGGR = 0x16161616u,
+  GRBG = 0x61616161u,
+  GBRG = 0x49494949u
+};
+
+
+
 // PPG demosaic interface
 struct PPG {
     virtual ~PPG() = default;
@@ -45,11 +54,14 @@ struct PostProcess {
 
 // Factory functions - implementations are in .cu files
 std::shared_ptr<PPG> create_ppg(torch::Device device, int width, int height, 
-  uint32_t filters, float median_threshold);
+  BayerPattern pattern, float median_threshold);
 
 std::shared_ptr<RCD> create_rcd(torch::Device device, int width, int height, 
-  uint32_t filters, float input_scale, float output_scale);
+  BayerPattern pattern, float input_scale, float output_scale);
 
 std::shared_ptr<PostProcess> create_postprocess(torch::Device device, int width, int height,
-  uint32_t filters, int color_smoothing_passes, bool green_eq_local, bool green_eq_global,
+  BayerPattern pattern, int color_smoothing_passes, bool green_eq_local, bool green_eq_global,
   float green_eq_threshold);
+
+// Bilinear 5x5 demosaic function
+torch::Tensor bilinear5x5_demosaic(const torch::Tensor& input, BayerPattern pattern);
