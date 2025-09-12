@@ -112,8 +112,23 @@ def xyz_to_rgb(xyz_image: torch.Tensor) -> torch.Tensor:
     return extension.xyz_to_rgb(xyz_image)
 
 
+def color_transform_3x3(image: torch.Tensor, matrix_3x3: torch.Tensor) -> torch.Tensor:
+    """
+    Apply a 3x3 color transformation matrix to an RGB image with clamping to [0,1].
+    
+    Args:
+        image: Input RGB image tensor (H, W, 3)
+        matrix_3x3: 3x3 transformation matrix (3, 3)
+        
+    Returns:
+        Transformed RGB image tensor with values clamped to [0,1]
+    """
+    return extension.color_transform_3x3(image, matrix_3x3)
+
+
 __all__ = [
     "compute_luminance", "modify_luminance",
     "rgb_to_lab", "lab_to_rgb",
-    "rgb_to_xyz", "xyz_to_lab", "lab_to_xyz", "xyz_to_rgb"
+    "rgb_to_xyz", "xyz_to_lab", "lab_to_xyz", "xyz_to_rgb",
+    "color_transform_3x3"
 ]

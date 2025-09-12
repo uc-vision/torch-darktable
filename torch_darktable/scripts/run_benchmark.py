@@ -1,11 +1,13 @@
+from functools import partial
 import torch
 import argparse
 from pathlib import Path
 from typing import Callable
 
 from torch_darktable import BayerPattern
+from torch_darktable.local_contrast import LaplacianParams
 from torch_darktable.utilities import load_image, rgb_to_bayer
-from torch_darktable import create_ppg, create_rcd, create_postprocess, create_laplacian, compute_luminance, create_bilateral, bilinear5x5_demosaic
+import torch_darktable as td
 
 
 def benchmark(name: str, func: Callable, *args, warmup_iters: int = 5, bench_iters: int = 50) -> float:
@@ -34,8 +36,6 @@ def benchmark(name: str, func: Callable, *args, warmup_iters: int = 5, bench_ite
     return rate
 
 
-
-
 def run_benchmark(image_path: Path, pattern: BayerPattern, warmup_iters: int = 5,
                  bench_iters: int = 50):
     print(f"Loading image: {image_path}")
@@ -52,19 +52,21 @@ def run_benchmark(image_path: Path, pattern: BayerPattern, warmup_iters: int = 5
     print()
 
 
-    ppg_alg = create_ppg(bayer_input.device, (width, height), pattern)
-    rcd_alg = create_rcd(bayer_input.device, (width, height), pattern)
-    color_smooth_alg = create_postprocess(bayer_input.device, (width, height), pattern, color_smoothing_passes=3)
-    green_eq_alg = create_postprocess(bayer_input.device, (width, height), pattern, green_eq_local=True, green_eq_global=True)
+    ppg_alg = td.create_ppg(bayer_input.device, (width, height), pattern)
+    rcd_alg = td.create_rcd(bayer_input.device, (width, height), pattern)
+    color_smooth_alg = td.create_postprocess(bayer_input.device, (width, height), pattern, color_smoothing_passes=3)
+    green_eq_alg = td.create_postprocess(bayer_input.device, (width, height), pattern, green_eq_local=True, green_eq_global=True)
     
-    laplacian_alg = create_laplacian(bayer_input.device, (width, height))
-    bilateral_alg = create_bilateral(bayer_input.device, (width, height), sigma_s=2.0, sigma_r=0.2, detail=0.2)
+    laplacian_alg = td.create_laplacian(bayer_input.device, (width, height), params=LaplacianParams())
+    
+    bilateral_2x2 = td.create_bilateral(bayer_input.device, (width, height), sigma_s=2.0, sigma_r=0.2)
+    bilateral_8x1 = td.create_bilateral(bayer_input.device, (width, height), sigma_s=8.0, sigma_r=0.1)
 
     print("=== Demosaic Algorithm Benchmarks ===")
 
     benchmark("PPG", ppg_alg.process, bayer_input, warmup_iters=warmup_iters, bench_iters=bench_iters)
     benchmark("RCD", rcd_alg.process, bayer_input, warmup_iters=warmup_iters, bench_iters=bench_iters)
-    benchmark("Bilinear 5x5", bilinear5x5_demosaic, bayer_input, pattern, warmup_iters=warmup_iters, bench_iters=bench_iters)
+    benchmark("Bilinear 5x5", td.bilinear5x5_demosaic, bayer_input, pattern, warmup_iters=warmup_iters, bench_iters=bench_iters)
 
     print()
 
@@ -76,10 +78,13 @@ def run_benchmark(image_path: Path, pattern: BayerPattern, warmup_iters: int = 5
 
     print("=== Laplacian/Bilateral Benchmarks ===")
 
-    mono_tensor = compute_luminance(rgb_tensor)
+    mono_tensor = td.compute_luminance(rgb_tensor)
     benchmark("Laplacian", laplacian_alg.process, mono_tensor, warmup_iters=warmup_iters, bench_iters=bench_iters)
-    benchmark("Bilateral", bilateral_alg.process, mono_tensor, warmup_iters=warmup_iters, bench_iters=bench_iters)
-    benchmark("Bilateral Denoise RGB", bilateral_alg.process_denoise, rgb_tensor, warmup_iters=warmup_iters, bench_iters=bench_iters)
+    benchmark("Bilateral Contrast", partial(bilateral_2x2.process_contrast, detail=0.2), mono_tensor, warmup_iters=warmup_iters, bench_iters=bench_iters)
+    benchmark("Bilateral Contrast", partial(bilateral_8x1.process_contrast, detail=0.2), mono_tensor, warmup_iters=warmup_iters, bench_iters=bench_iters)
+
+    benchmark("Bilateral Denoise RGB", partial(bilateral_2x2.process_denoise, amount=0.2), rgb_tensor, warmup_iters=warmup_iters, bench_iters=bench_iters)
+    benchmark("Bilateral Denoise RGB", partial(bilateral_8x1.process_denoise, amount=0.2), rgb_tensor, warmup_iters=warmup_iters, bench_iters=bench_iters)
 
 
 

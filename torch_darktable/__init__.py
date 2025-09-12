@@ -13,8 +13,12 @@ from .local_contrast import LaplacianParams, create_laplacian, local_laplacian_r
 from .color_conversion import (
     compute_luminance, modify_luminance,
     rgb_to_lab, lab_to_rgb,
-    rgb_to_xyz, xyz_to_lab, lab_to_xyz, xyz_to_rgb
+    rgb_to_xyz, xyz_to_lab, lab_to_xyz, xyz_to_rgb,
+    color_transform_3x3
 )
+from .white_balance import apply_white_balance, estimate_white_balance
+
+from . import tonemap, debayer, local_contrast, color_conversion, white_balance
 
 __all__ = [
     # Core classes and enums
@@ -36,7 +40,26 @@ __all__ = [
     "compute_luminance", "modify_luminance",
     "rgb_to_lab", "lab_to_rgb", 
     "rgb_to_xyz", "xyz_to_lab", "lab_to_xyz", "xyz_to_rgb",
+    "color_transform_3x3",
+    
+    # White balance
+    "apply_white_balance", "estimate_white_balance",
 
     # Extension
-    "extension"
+    "extension",
+
+    # Tonemap
+    "tonemap",
+
+    # Debayer
+    "debayer",
+    
+    # Local contrast
+    "local_contrast",
+
+    # Color conversion
+    "color_conversion",
+
+    # White balance
+    "white_balance"
 ]

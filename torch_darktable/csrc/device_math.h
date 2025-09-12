@@ -46,6 +46,22 @@ __device__ __forceinline__ int2 get_thread_pos() {
     return make_int2(blockIdx.x * blockDim.x + threadIdx.x, blockIdx.y * blockDim.y + threadIdx.y);
 }
 
+// More descriptive alias for pixel indexing
+__device__ __forceinline__ int2 pixel_index() {
+    return get_thread_pos();
+}
+
+// Strided pixel indexing for sparse sampling
+__device__ __forceinline__ int2 pixel_index_strided(int stride) {
+    int2 pos = pixel_index();
+    return make_int2(pos.x * stride, pos.y * stride);
+}
+
+// 1D thread indexing for linear arrays
+__device__ __forceinline__ int thread_index() {
+    return blockIdx.x * blockDim.x + threadIdx.x;
+}
+
 __device__ __forceinline__ int clamp_int(int v, int lo, int hi) {
   return v < lo ? lo : (v > hi ? hi : v);
 }
@@ -224,6 +240,20 @@ __device__ __forceinline__ float3 fmin(const float3& v, float val) {
     return make_float3(fminf(v.x, val), fminf(v.y, val), fminf(v.z, val));
 }
 
+// Clamp functions
+__device__ __forceinline__ float3 clamp(const float3& v, float lo, float hi) {
+    return make_float3(
+        fminf(fmaxf(v.x, lo), hi),
+        fminf(fmaxf(v.y, lo), hi), 
+        fminf(fmaxf(v.z, lo), hi)
+    );
+}
+
+// Normalized clamp to [0,1] - very common for color values
+__device__ __forceinline__ float3 clamp01(const float3& v) {
+    return clamp(v, 0.0f, 1.0f);
+}
+
 // Load/store float3 from/to arrays
 __device__ __forceinline__ float3 float3_load(const float* input, int idx) {
     return make_float3(
@@ -293,4 +323,36 @@ __device__ __forceinline__ void swap_floats(float& a, float& b) {
   const float tmp = b;
   b = a;
   a = tmp;
+}
+
+// Vectorized comparison operators 
+struct bool3 {
+    bool x, y, z;
+    __device__ __forceinline__ bool3(bool x_, bool y_, bool z_) : x(x_), y(y_), z(z_) {}
+};
+
+// Comparison operators for float3
+__device__ __forceinline__ bool3 operator>(const float3& a, float b) {
+    return bool3(a.x > b, a.y > b, a.z > b);
+}
+
+__device__ __forceinline__ bool3 operator<(const float3& a, float b) {
+    return bool3(a.x < b, a.y < b, a.z < b);
+}
+
+__device__ __forceinline__ bool3 operator>=(const float3& a, float b) {
+    return bool3(a.x >= b, a.y >= b, a.z >= b);
+}
+
+__device__ __forceinline__ bool3 operator<=(const float3& a, float b) {
+    return bool3(a.x <= b, a.y <= b, a.z <= b);
+}
+
+// Vectorized conditional selection: select(condition, true_val, false_val)
+__device__ __forceinline__ float3 select(const bool3& cond, const float3& true_val, const float3& false_val) {
+    return make_float3(
+        cond.x ? true_val.x : false_val.x,
+        cond.y ? true_val.y : false_val.y,
+        cond.z ? true_val.z : false_val.z
+    );
 }

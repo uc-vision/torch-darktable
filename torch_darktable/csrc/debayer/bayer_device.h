@@ -16,7 +16,6 @@ __device__ __forceinline__ int2 offset2x2(int C) {
 }
 
 
-
 __device__ constexpr int order_rggb[4] = {0, 1, 1, 2};
 __device__ constexpr int order_bggr[4] = {2, 3, 1, 0};
 __device__ constexpr int order_grbg[4] = {1, 0, 2, 3};
@@ -31,4 +30,15 @@ __device__ __forceinline__ constexpr int get_pixel_type(int C) {
     case BayerPattern::GBRG: { return order_gbrg[C]; }
   }
   return 0; // Should never reach here
+}
+
+// Extract RGB from 2x2 Bayer patch - RGGB example: p00=R, p01=G, p10=G, p11=B
+__device__ __forceinline__ float3 bayer_2x2_to_rgb(float p00, float p01, float p10, float p11, BayerPattern pattern) {
+    switch (pattern) {
+        case BayerPattern::RGGB: return make_float3(p00, (p01 + p10) * 0.5f, p11);
+        case BayerPattern::BGGR: return make_float3(p11, (p01 + p10) * 0.5f, p00);
+        case BayerPattern::GRBG: return make_float3(p01, (p00 + p11) * 0.5f, p10);
+        case BayerPattern::GBRG: return make_float3(p10, (p00 + p11) * 0.5f, p01);
+    }
+    return make_float3(0.0f, 0.0f, 0.0f);
 }

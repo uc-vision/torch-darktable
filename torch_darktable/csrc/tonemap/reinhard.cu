@@ -193,12 +193,13 @@ torch::Tensor compute_image_bounds(const torch::Tensor& image, int stride) {
     return bounds;
 }
 
-torch::Tensor compute_image_metrics(std::vector<torch::Tensor>& images, int stride, float min_gray) {
+torch::Tensor compute_image_metrics(const std::vector<torch::Tensor>& images, int stride, float min_gray) {
 
     // Initialize metrics tensor: [bounds_min, bounds_max, log_bounds_min, log_bounds_max, log_mean, mean, rgb_mean_r, rgb_mean_g, rgb_mean_b]
     auto metrics = torch::tensor({FLT_MAX, -FLT_MAX, FLT_MAX, -FLT_MAX, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}, 
-                                torch::dtype(torch::kFloat32).device(image.device()));
+                                torch::dtype(torch::kFloat32).device(images[0].device()));
 
+    int total_pixels = 0;
     for (const auto& image : images) {
       TORCH_CHECK(image.device().is_cuda(), "Input must be on CUDA device");
       TORCH_CHECK(image.dtype() == torch::kFloat32, "Input must be float32");
@@ -214,7 +215,7 @@ torch::Tensor compute_image_metrics(std::vector<torch::Tensor>& images, int stri
       
       int sample_width = (width + stride - 1) / stride;
       int sample_height = (height + stride - 1) / stride;
-      int total_pixels = sample_width * sample_height;
+      total_pixels += sample_width * sample_height;
       
       const dim3 block_size(16, 16);
       const dim3 grid_size((sample_width + block_size.x - 1) / block_size.x,
@@ -239,21 +240,5 @@ torch::Tensor compute_image_metrics(std::vector<torch::Tensor>& images, int stri
     
     return metrics;
 }
-torch::Tensor compute_image_metrics(const std::vector<torch::Tensor>& images, int stride, float min_gray) {
-    TORCH_CHECK(!images.empty(), "Images vector must not be empty");
-    auto device = images[0].device();
-    for (const auto& img : images) {
-        TORCH_CHECK(img.device() == device, "All images must be on the same device");
-        TORCH_CHECK(img.device().is_cuda(), "Inputs must be on CUDA device");
-        TORCH_CHECK(img.dtype() == torch::kFloat32, "Inputs must be float32");
-        TORCH_CHECK(img.dim() == 3 && img.size(2) == 3, "Inputs must be (H, W, 3)");
-    }
 
-    std::vector<torch::Tensor> metrics_list;
-    metrics_list.reserve(images.size());
-    for (const auto& img : images) {
-        metrics_list.push_back(compute_image_metrics(img, stride, min_gray));
-    }
-    return torch::stack(metrics_list, 0);
-}
 

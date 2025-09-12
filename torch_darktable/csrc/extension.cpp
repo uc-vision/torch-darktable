@@ -4,6 +4,7 @@
 #include "color_conversions.h"
 #include "packed.h"
 #include "tonemap/tonemap.h"
+#include "white_balance.h"
 
 #include <ATen/ATen.h>
 
@@ -122,6 +123,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("lab_to_rgb", &lab_to_rgb, "Convert LAB to RGB color space",
           py::arg("lab"));
 
+    m.def("color_transform_3x3", &color_transform_3x3, "Apply 3x3 color matrix transform with clamping",
+          py::arg("input"), py::arg("matrix_3x3"));
+
     // Packed 12-bit encoding/decoding functions
     m.def("encode12_u16", &encode12_u16, "Encode uint16 values to packed 12-bit",
           py::arg("input"), py::arg("ids_format") = false);
@@ -139,7 +143,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("compute_image_bounds", &compute_image_bounds, "Compute min/max bounds of image",
           py::arg("image"), py::arg("stride") = 8);
     m.def("compute_image_metrics", &compute_image_metrics, "Compute 9-vector image metrics for tone mapping",
-          py::arg("image"), py::arg("stride") = 8, py::arg("min_gray") = 1e-4f);
+          py::arg("images"), py::arg("stride") = 8, py::arg("min_gray") = 1e-4f);
     m.def("reinhard_tonemap", &reinhard_tonemap, "Apply Reinhard tone mapping",
           py::arg("image"), py::arg("metrics"), 
           py::arg("gamma") = 1.0f, py::arg("intensity") = 1.0f, 
@@ -157,5 +161,11 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     // Bilinear 5x5 demosaic function
     m.def("bilinear5x5_demosaic", &bilinear5x5_demosaic, "Apply 5x5 bilinear demosaic",
           py::arg("input"), py::arg("pattern"));
+
+    // White balance functions
+    m.def("apply_white_balance", &apply_white_balance, "Apply white balance gains to Bayer image",
+          py::arg("bayer_image"), py::arg("gains"), py::arg("pattern"));
+    m.def("estimate_white_balance", &estimate_white_balance, "Estimate white balance from Bayer images",
+          py::arg("bayer_images"), py::arg("pattern"), py::arg("quantile") = 0.95f, py::arg("stride") = 8);
 
 }

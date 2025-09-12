@@ -24,7 +24,7 @@ class Reinhard:
         assert image.dtype == torch.float32, "Input must be float32"
         assert image.device.type == 'cuda', "Input must be on CUDA device"
         
-        return extension.compute_image_metrics(image, stride, min_gray)
+        return extension.compute_image_metrics([image], stride, min_gray)
     
     @staticmethod
     def metrics_to_dict(metrics: torch.Tensor) -> dict[str, float]:

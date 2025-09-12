@@ -15,3 +15,6 @@ torch::Tensor xyz_to_rgb(const torch::Tensor& xyz);
 // Direct conversions
 torch::Tensor rgb_to_lab(const torch::Tensor& rgb);
 torch::Tensor lab_to_rgb(const torch::Tensor& lab);
+
+// Generic 3x3 matrix transform
+torch::Tensor color_transform_3x3(const torch::Tensor& input, const torch::Tensor& matrix_3x3);

@@ -89,10 +89,9 @@ __device__ __forceinline__ GridSample make_grid_sample(
 // Zero out a 2D slice of the 3D grid interpreted as [sizex, sizey*sizez]
 __global__ void zero_grid(float *grid, int width, int height)
 {
-    const int x = blockIdx.x * blockDim.x + threadIdx.x;
-    const int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if(x >= width || y >= height) return;
-    grid[x + width * y] = 0.0f;
+    int2 pos = pixel_index();
+    if(pos.x >= width || pos.y >= height) return;
+    grid[pos.x + width * pos.y] = 0.0f;
 }
 
 
@@ -103,12 +102,11 @@ __global__ void splat_kernel(
     const int sizex, const int sizey, const int sizez,
     const float sigma_s, const float sigma_r)
 {
-    const int x = blockIdx.x * blockDim.x + threadIdx.x;
-    const int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if(x >= width || y >= height) return;
+    int2 pos = pixel_index();
+    if(pos.x >= width || pos.y >= height) return;
 
-    const float L = in[y * width + x];
-    const GridSample s = make_grid_sample(x, y, L, sizex, sizey, sizez, sigma_s, sigma_r);
+    const float L = in[pos.y * width + pos.x];
+    const GridSample s = make_grid_sample(pos.x, pos.y, L, sizex, sizey, sizez, sigma_s, sigma_r);
     const float contrib = 1.0f / (sigma_s * sigma_s);
     trilerp_add(grid, s.gi, s.fx, s.fy, s.fz, s.ox, s.oy, s.oz, contrib);
 }
@@ -120,12 +118,11 @@ __global__ void splat_num_kernel(
     const int sizex, const int sizey, const int sizez,
     const float sigma_s, const float sigma_r)
 {
-    const int x = blockIdx.x * blockDim.x + threadIdx.x;
-    const int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if(x >= width || y >= height) return;
+    int2 pos = pixel_index();
+    if(pos.x >= width || pos.y >= height) return;
 
-    const float L = in[y * width + x];
-    const GridSample s = make_grid_sample(x, y, L, sizex, sizey, sizez, sigma_s, sigma_r);
+    const float L = in[pos.y * width + pos.x];
+    const GridSample s = make_grid_sample(pos.x, pos.y, L, sizex, sizey, sizez, sigma_s, sigma_r);
     const float contrib = 1.0f / (sigma_s * sigma_s);
     trilerp_add(grid, s.gi, s.fx, s.fy, s.fz, s.ox, s.oy, s.oz, contrib * L);
 }
@@ -215,20 +212,19 @@ __global__ void slice_kernel(
     const float sigma_s, const float sigma_r,
     const float detail)
 {
-    const int x = blockIdx.x * blockDim.x + threadIdx.x;
-    const int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if(x >= width || y >= height) return;
+    int2 pos = pixel_index();
+    if(pos.x >= width || pos.y >= height) return;
 
-    const float L = in[y * width + x];
+    const float L = in[pos.y * width + pos.x];
 
     // Scale matches removal of 100x in splat: 100 * 0.04 = 4
     const float norm = -detail * sigma_r * 4.0f;
 
-    const GridSample s = make_grid_sample(x, y, L, sizex, sizey, sizez, sigma_s, sigma_r);
+    const GridSample s = make_grid_sample(pos.x, pos.y, L, sizex, sizey, sizez, sigma_s, sigma_r);
     const float Ldiff = trilerp(grid, s.gi, s.fx, s.fy, s.fz, s.ox, s.oy, s.oz);
 
     const float Lout = fmaxf(0.0f, L + norm * Ldiff);
-    out[y * width + x] = Lout;
+    out[pos.y * width + pos.x] = Lout;
 }
 
 // Denoise: slice weighted average from two blurred grids (sum_wL, sum_w)
@@ -238,18 +234,17 @@ __global__ void slice_denoise_kernel(
     const int sizex, const int sizey, const int sizez,
     const float sigma_s, const float sigma_r, const float amount)
 {
-    const int x = blockIdx.x * blockDim.x + threadIdx.x;
-    const int y = blockIdx.y * blockDim.y + threadIdx.y;
-    if(x >= width || y >= height) return;
+    int2 pos = pixel_index();
+    if(pos.x >= width || pos.y >= height) return;
 
-    const float L = in[y * width + x];
-    const GridSample s = make_grid_sample(x, y, L, sizex, sizey, sizez, sigma_s, sigma_r);
+    const float L = in[pos.y * width + pos.x];
+    const GridSample s = make_grid_sample(pos.x, pos.y, L, sizex, sizey, sizez, sigma_s, sigma_r);
     const float num = trilerp(grid_num, s.gi, s.fx, s.fy, s.fz, s.ox, s.oy, s.oz);
     const float den = trilerp(grid_den, s.gi, s.fx, s.fy, s.fz, s.ox, s.oy, s.oz);
 
     const float denoised = (den > 1e-8f) ? (num / den) : L;
     const float Lout = (1.0f - amount) * L + amount * denoised;
-    out[y * width + x] = Lout;
+    out[pos.y * width + pos.x] = Lout;
 }
 
 

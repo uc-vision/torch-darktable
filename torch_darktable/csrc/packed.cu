@@ -1,4 +1,5 @@
 #include "cuda_utils.h"
+#include "device_math.h"
 #include <torch/extension.h>
 #include <cuda_runtime.h>
 #include <cuda_fp16.h>
@@ -36,7 +37,7 @@ __global__ void encode12_kernel_u16(
     int num_pairs,
     bool ids_format
 ) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int idx = thread_index();
     if (idx >= num_pairs) return;
 
     uint16_t p0 = input[idx * 2];
@@ -63,7 +64,7 @@ __global__ void encode12_kernel_float(
     bool ids_format,
     float scale
 ) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int idx = thread_index();
     if (idx >= num_pairs) return;
 
     float f0 = input[idx * 2] * scale;
@@ -90,7 +91,7 @@ __global__ void decode12_kernel_float(
     bool ids_format,
     float scale
 ) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int idx = thread_index();
     if (idx >= num_pairs) return;
 
     const uint8_t* in_ptr = input + idx * 3;
@@ -114,7 +115,7 @@ __global__ void decode12_kernel_half(
     bool ids_format,
     float scale
 ) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int idx = thread_index();
     if (idx >= num_pairs) return;
 
     const uint8_t* in_ptr = input + idx * 3;
@@ -137,7 +138,7 @@ __global__ void decode12_kernel_u16(
     int num_pairs,
     bool ids_format
 ) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int idx = thread_index();
     if (idx >= num_pairs) return;
 
     const uint8_t* in_ptr = input + idx * 3;
@@ -154,7 +155,7 @@ __global__ void decode12_kernel_u16(
 }
 
 // Host functions
-torch::Tensor encode12_u16(torch::Tensor input, bool ids_format) {
+torch::Tensor encode12_u16(const torch::Tensor& input, bool ids_format) {
     TORCH_CHECK(input.device().is_cuda(), "Input must be on CUDA device");
     TORCH_CHECK(input.dtype() == torch::kUInt16, "Input must be uint16");
     TORCH_CHECK(input.dim() == 1, "Input must be 1D tensor");
@@ -177,7 +178,7 @@ torch::Tensor encode12_u16(torch::Tensor input, bool ids_format) {
     return output;
 }
 
-torch::Tensor encode12_float(torch::Tensor input, bool ids_format, bool scaled) {
+torch::Tensor encode12_float(const torch::Tensor& input, bool ids_format, bool scaled) {
     TORCH_CHECK(input.device().is_cuda(), "Input must be on CUDA device");
     TORCH_CHECK(input.dtype() == torch::kFloat32, "Input must be float32");
     TORCH_CHECK(input.dim() == 1, "Input must be 1D tensor");
@@ -203,7 +204,7 @@ torch::Tensor encode12_float(torch::Tensor input, bool ids_format, bool scaled) 
     return output;
 }
 
-torch::Tensor decode12_float(torch::Tensor input, bool ids_format, bool scaled) {
+torch::Tensor decode12_float(const torch::Tensor& input, bool ids_format, bool scaled) {
     TORCH_CHECK(input.device().is_cuda(), "Input must be on CUDA device");
     TORCH_CHECK(input.dtype() == torch::kUInt8, "Input must be uint8");
     TORCH_CHECK(input.dim() == 1, "Input must be 1D tensor");
@@ -229,7 +230,7 @@ torch::Tensor decode12_float(torch::Tensor input, bool ids_format, bool scaled) 
     return output;
 }
 
-torch::Tensor decode12_half(torch::Tensor input, bool ids_format, bool scaled) {
+torch::Tensor decode12_half(const torch::Tensor& input, bool ids_format, bool scaled) {
     TORCH_CHECK(input.device().is_cuda(), "Input must be on CUDA device");
     TORCH_CHECK(input.dtype() == torch::kUInt8, "Input must be uint8");
     TORCH_CHECK(input.dim() == 1, "Input must be 1D tensor");
@@ -255,7 +256,7 @@ torch::Tensor decode12_half(torch::Tensor input, bool ids_format, bool scaled) {
     return output;
 }
 
-torch::Tensor decode12_u16(torch::Tensor input, bool ids_format) {
+torch::Tensor decode12_u16(const torch::Tensor& input, bool ids_format) {
     TORCH_CHECK(input.device().is_cuda(), "Input must be on CUDA device");
     TORCH_CHECK(input.dtype() == torch::kUInt8, "Input must be uint8");
     TORCH_CHECK(input.dim() == 1, "Input must be 1D tensor");
