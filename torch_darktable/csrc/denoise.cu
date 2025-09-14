@@ -117,7 +117,7 @@ __global__ void wiener_tile_kernel(
     float* __restrict__ mask,         // (H_pad, W_pad)
     int H, int W, int H_pad, int W_pad,
     int stride, int grid_h, int grid_w,
-    float noise_power, float eps
+    const float* noise_powers, float eps
 ) {
 
     __shared__ Tile tile_data;
@@ -137,7 +137,7 @@ __global__ void wiener_tile_kernel(
         cg::this_thread_block().sync();
         
         // 4. Apply Wiener gain
-        apply_wiener_gain(tile_data, noise_power, eps);
+        apply_wiener_gain(tile_data, noise_powers[c], eps);
         cg::this_thread_block().sync();
         
         // 5. Inverse 2D FFT
@@ -155,6 +155,7 @@ static torch::Tensor make_gaussian_window(int size, float weight, torch::Device 
     auto w = torch::exp(-(r * r) / (weight * half * half));
     return w.unsqueeze(0) * w.unsqueeze(1);
 }
+
 
 static void init_windows(float weight_fft, float weight_interp, torch::Device device) {
     auto window = make_gaussian_window(K, weight_fft, device);
@@ -199,15 +200,15 @@ __global__ void normalize_and_crop_kernel(
 
 
 struct CudaWiener final : public Wiener {
-    CudaWiener(torch::Device device, int width, int height, float sigma, float eps)
-        : device_(device), width_(width), height_(height), sigma_(sigma), eps_(eps) {
+    CudaWiener(torch::Device device, int width, int height, float eps, int overlap_factor = 4)
+        : device_(device), width_(width), height_(height), eps_(eps), overlap_factor_(overlap_factor) {
         
         constexpr float weight_fft = 0.3f;
         constexpr float weight_interp = 0.3f;
         init_windows(weight_fft, weight_interp, device);
     }
     
-    torch::Tensor process(const torch::Tensor &input) override {
+    torch::Tensor process(const torch::Tensor &input, const torch::Tensor &noise_sigmas) override {
         TORCH_CHECK(input.device() == device_, "input device mismatch");
         TORCH_CHECK(input.dim() == 3, "expected HWC tensor");
 
@@ -217,7 +218,7 @@ struct CudaWiener final : public Wiener {
         TORCH_CHECK(H == height_ && W == width_, "input size mismatch");
         
         // Compute dimensions on-demand
-        const int stride = K / 4;  // K/4 overlap = 8
+        const int stride = K / overlap_factor_;  // Configurable overlap
         const int h_pad = H + 2 * K;
         const int w_pad = W + 2 * K;
         
@@ -230,11 +231,21 @@ struct CudaWiener final : public Wiener {
         auto mask = torch::zeros({h_pad, w_pad}, input.options());
         auto final_out = torch::zeros({H, W, C}, input.options());
         
-        // Noise power: compute actual sum of window squares like Python
+        // Noise power: flexible per-channel noise handling
         constexpr float weight_fft = 0.3f;
         auto window = make_gaussian_window(K, weight_fft, device_);
         float window_sum_sq = torch::sum(window * window).item<float>();
-        float noise_power = window_sum_sq * (sigma_ * sigma_);
+        
+        // Process noise sigmas (always 3 channels)
+        TORCH_CHECK(noise_sigmas.numel() == 3, "noise_sigmas must have 3 elements");
+        torch::Tensor sigmas = noise_sigmas;
+        
+        // Convert to noise powers (always 3 channels)
+        float noise_powers[3];
+        for (int c = 0; c < 3; c++) {
+            float sigma_c = sigmas[c].item<float>();
+            noise_powers[c] = window_sum_sq * (sigma_c * sigma_c);
+        }
         
         dim3 grid(grid_w, grid_h);
         dim3 block(K, K);  // 32x32 threads, each handles one pixel
@@ -246,7 +257,7 @@ struct CudaWiener final : public Wiener {
             mask.data_ptr<float>(),
             H, W, h_pad, w_pad,
             stride, grid_h, grid_w,
-            noise_power, eps_
+            noise_powers, eps_
         );
         
         // Check for kernel launch errors
@@ -271,24 +282,24 @@ struct CudaWiener final : public Wiener {
         return final_out;
     }
     
-    void set_sigma(float sigma) override { sigma_ = sigma; }
-    float get_sigma() const override { return sigma_; }
     void set_eps(float eps) override { eps_ = eps; }
     float get_eps() const override { return eps_; }
     
 private:
     torch::Device device_;
     int width_, height_;
-    float sigma_, eps_;
+    float eps_;
+    int overlap_factor_;
 };
 
 } // namespace
 
 std::shared_ptr<Wiener> create_wiener(torch::Device device,
-    int width, int height, float sigma, float eps) {
+    int width, int height, float eps, int overlap_factor) {
 
-    return std::make_shared<CudaWiener>(device, width, height, sigma, eps);
+    return std::make_shared<CudaWiener>(device, width, height, eps, overlap_factor);
 }
+
 
 
 

@@ -16,6 +16,16 @@ def load_rgb_image(image_path: Path) -> torch.Tensor:
     rgb_array = rgb_array / max(float(np.max(rgb_array)), 1.0)
     return torch.from_numpy(rgb_array).cuda()
 
+def get_noise_level(args, input_rgb):
+    if args.estimate_noise:
+        noise_level = td.estimate_channel_noise(input_rgb)
+        print(f"Estimated per-channel noise: R={noise_level[0]:.4f}, G={noise_level[1]:.4f}, B={noise_level[2]:.4f}")
+        return noise_level * args.noise_scale
+    else:
+
+        print(f"Using manual noise level: {args.sigma}")
+        return args.sigma
+
 
 def test_denoise(image_path: Path, args):
     print(f"Loading image: {image_path}")
@@ -25,12 +35,13 @@ def test_denoise(image_path: Path, args):
 
     # Keep in HWC format (no conversion needed)
     print("Creating Wiener denoiser...")
-    wiener = td.create_wiener(input_rgb.device, (width, height), args.sigma, args.eps)
-    print(f"Parameters: sigma={args.sigma}, eps={args.eps}")
+    wiener = td.create_wiener(input_rgb.device, width, height, args.sigma, args.eps, args.overlap_factor)
+    print(f"Parameters: sigma={args.sigma}, eps={args.eps}, overlap_factor={args.overlap_factor}")
 
     print("Processing...")
-    with torch.no_grad():
-        result_rgb = wiener.process(input_rgb)
+    with torch.no_grad():     
+      # Manual mode using provided sigma
+      result_rgb = wiener.process(input_rgb, get_noise_level(args, input_rgb))
 
     # Already in HWC format
 
@@ -49,8 +60,12 @@ def test_denoise(image_path: Path, args):
 def main():
     parser = argparse.ArgumentParser(description='Test CUDA Wiener denoiser on an image')
     parser.add_argument('image', type=Path, help='Input image path')
-    parser.add_argument('--sigma', type=float, default=0.05, help='Noise standard deviation')
+    parser.add_argument('--sigma', type=float, default=0.05, help='Noise standard deviation (manual mode)')
     parser.add_argument('--eps', type=float, default=1e-15, help='Regularization epsilon')
+    parser.add_argument('--overlap-factor', type=int, default=4, help='Overlap factor: 2=half, 4=quarter, 8=eighth block overlap')
+
+    parser.add_argument('--estimate-noise', action='store_true', help='Use automatic per-channel noise estimation')
+    parser.add_argument('--noise-scale', type=float, default=1.0, help='Scale factor for noise estimation (auto mode only)')
 
     args = parser.parse_args()
     test_denoise(args.image, args)

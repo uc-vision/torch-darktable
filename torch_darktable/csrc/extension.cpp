@@ -39,7 +39,8 @@ std::shared_ptr<Bilateral> create_bilateral(torch::Device device,
   int width, int height, float sigma_s, float sigma_r);
 
 std::shared_ptr<Wiener> create_wiener(torch::Device device, int width, int height,
-  float sigma = 0.1f, float eps = 1e-15f);
+  float eps, int overlap_factor);
+
 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wattributes"
@@ -180,11 +181,11 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     py::class_<Wiener, std::shared_ptr<Wiener>>(m, "Wiener")
         .def(py::init(&create_wiener), "Create Wiener denoiser",
              py::arg("device"), py::arg("width"), py::arg("height"),
-             py::arg("sigma") = 0.1f, py::arg("eps") = 1e-15f)
+             py::arg("eps") = 1e-15f, py::arg("overlap_factor") = 4)
         .def("process", &Wiener::process, "Process image with Wiener filter",
-             py::arg("input"))
-        .def_property("sigma", &Wiener::get_sigma, &Wiener::set_sigma, "Noise standard deviation")
+             py::arg("input"), py::arg("noise_sigmas"))
         .def_property("eps", &Wiener::get_eps, &Wiener::set_eps, "Regularization epsilon");
+
 
 }
 
