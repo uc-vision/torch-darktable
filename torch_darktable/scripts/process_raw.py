@@ -35,8 +35,7 @@ class Settings:
     tonemap_method: Literal['reinhard', 'aces', 'linear'] = 'reinhard'
     use_postprocess: bool = True
     use_bilateral: bool = True
-    use_bilateral_denoise: bool = False
-    denoise_amount: float = 0.5
+    use_wiener: bool = False
     
     bilateral_detail: float = 0.2
     bilateral_sigma_s: float = 2.0
@@ -45,6 +44,7 @@ class Settings:
     tonemap_gamma: float = 0.75
     tonemap_intensity: float = 2.0
     tonemap_light_adapt: float = 0.9
+    wiener_sigma: float = 0.05
 
 
 def interactive_debayer(bayer_image: torch.Tensor) -> None:
@@ -58,13 +58,14 @@ def interactive_debayer(bayer_image: torch.Tensor) -> None:
     bil_workspace = td.create_bilateral(
         device,
         image_size,
-        spatial_sigma=settings.bilateral_sigma_s,
-        range_sigma=settings.bilateral_sigma_r
+        sigma_s=settings.bilateral_sigma_s,
+        sigma_r=settings.bilateral_sigma_r
     )
 
     rcd_workspace = td.create_rcd(device, image_size, td.BayerPattern.RGGB, input_scale=1.0, output_scale=1.0)
     ppg_workspace = td.create_ppg(device, image_size, td.BayerPattern.RGGB, median_threshold=0.25)
     postprocess_workspace = td.create_postprocess(device, image_size, td.BayerPattern.RGGB, color_smoothing_passes=1, green_eq_local=True, green_eq_global=True, green_eq_threshold=0.01)
+    wiener_workspace = td.create_wiener(device, image_size, settings.wiener_sigma)
 
     def compute_rgb() -> np.ndarray:
         # Use torch_darktable linear debayer
@@ -78,12 +79,16 @@ def interactive_debayer(bayer_image: torch.Tensor) -> None:
         if settings.use_postprocess and settings.debayer != 'linear':
             rgb_raw = postprocess_workspace.process(rgb_raw)
 
-        if settings.use_bilateral_denoise or settings.use_bilateral:
+        if settings.use_wiener:
+            rgb_chw = rgb_raw.permute(2, 0, 1)
+            rgb_chw = wiener_workspace.process(rgb_chw)
+            rgb_raw = rgb_chw.permute(1, 2, 0)
+
+        if settings.use_bilateral:
             rgb_raw = td.bilateral_rgb(
                 bil_workspace,
                 rgb_raw,
-                detail=(settings.bilateral_detail if settings.use_bilateral else None),
-                denoise_amount=(settings.denoise_amount if settings.use_bilateral_denoise else None),
+                detail=settings.bilateral_detail,
             )
 
         if settings.tonemap_method == 'reinhard':
@@ -125,8 +130,8 @@ def interactive_debayer(bayer_image: torch.Tensor) -> None:
     ax_checks = plt.axes((0.05, 0.09, 0.14, 0.1))
     cb = CheckButtons(
         ax_checks,
-        ('postprocess', 'bilat_denoise', 'bilateral'),
-        (settings.use_postprocess, settings.use_bilateral_denoise, settings.use_bilateral)
+        ('postprocess', 'wiener', 'bilateral'),
+        (settings.use_postprocess, settings.use_wiener, settings.use_bilateral)
     )
 
     # Tonemap method radio
@@ -149,20 +154,28 @@ def interactive_debayer(bayer_image: torch.Tensor) -> None:
             axes.append(plt.axes((x, y, w, h)))
         return axes
 
-    ax_gamma, ax_intensity, ax_denoise, ax_detail, ax_sigma, ax_sigma_r, ax_light, ax_ppg_med = create_axes_vertical(8)
+    ax_gamma, ax_intensity, ax_light, ax_detail, ax_sigma, ax_sigma_r, ax_wiener_sigma, ax_ppg_med = create_axes_vertical(8)
 
-    s_gamma = Slider(ax_gamma, 'gamma', 0.1, 3.0, valinit=settings.tonemap_gamma)
-    s_intensity = Slider(ax_intensity, 'intensity', 0.1, 10.0, valinit=settings.tonemap_intensity)
-    s_denoise = Slider(ax_denoise, 'bilat_denoise', 0.0, 1.0, valinit=settings.denoise_amount)
-    s_detail = Slider(ax_detail, 'bilat_detail', 0.0, 2.0, valinit=settings.bilateral_detail)
-    s_sigma = Slider(ax_sigma, 'bilat_sigma', 1.0, 16.0, valinit=settings.bilateral_sigma_s)
-    s_sigma_r = Slider(ax_sigma_r, 'bilat_sigma_r', 0.01, 0.5, valinit=settings.bilateral_sigma_r)
-    s_light = Slider(ax_light, 'light_adapt', 0.0, 1.0, valinit=settings.tonemap_light_adapt)
+    # Tonemap group
+    s_gamma = Slider(ax_gamma, 'tm_gamma', 0.1, 3.0, valinit=settings.tonemap_gamma)
+    s_intensity = Slider(ax_intensity, 'tm_intensity', 0.1, 10.0, valinit=settings.tonemap_intensity)
+    s_light = Slider(ax_light, 'tm_light_adapt', 0.0, 1.0, valinit=settings.tonemap_light_adapt)
+    
+    # Bilateral group
+    s_detail = Slider(ax_detail, 'bil_detail', 0.0, 2.0, valinit=settings.bilateral_detail)
+    s_sigma = Slider(ax_sigma, 'bil_sigma_s', 1.0, 16.0, valinit=settings.bilateral_sigma_s)
+    s_sigma_r = Slider(ax_sigma_r, 'bil_sigma_r', 0.01, 0.5, valinit=settings.bilateral_sigma_r)
+    
+    # Wiener group
+    s_wiener_sigma = Slider(ax_wiener_sigma, 'wiener_sigma', 0.001, 0.2, valinit=settings.wiener_sigma)
+    
+    # PPG group
     s_ppg_med = Slider(ax_ppg_med, 'ppg_median', 0.0, 1.0, valinit=settings.ppg_median_threshold)
 
     ax_detail.set_zorder(10)
     ax_sigma.set_zorder(10)
     ax_sigma_r.set_zorder(10)
+    ax_wiener_sigma.set_zorder(10)
 
     def update_display():
         new_img = compute_rgb()
@@ -178,12 +191,12 @@ def interactive_debayer(bayer_image: torch.Tensor) -> None:
         s_detail.set_active(enabled)
         ax_detail.patch.set_alpha(1.0 if enabled else 0.3)
 
-    def set_denoise_enabled(enabled: bool):
-        s_denoise.set_active(enabled)
-        ax_denoise.patch.set_alpha(1.0 if enabled else 0.3)
+    def set_wiener_enabled(enabled: bool):
+        s_wiener_sigma.set_active(enabled)
+        ax_wiener_sigma.patch.set_alpha(1.0 if enabled else 0.3)
 
     def update_sigma_enabled():
-        enabled = settings.use_bilateral or settings.use_bilateral_denoise
+        enabled = settings.use_bilateral
         s_sigma.set_active(enabled)
         s_sigma_r.set_active(enabled)
         ax_sigma.patch.set_alpha(1.0 if enabled else 0.3)
@@ -196,10 +209,9 @@ def interactive_debayer(bayer_image: torch.Tensor) -> None:
     def on_cb(label):
         if label == 'postprocess':
             settings.use_postprocess = not settings.use_postprocess
-        elif label == 'bilat_denoise':
-            settings.use_bilateral_denoise = not settings.use_bilateral_denoise
-            set_denoise_enabled(settings.use_bilateral_denoise)
-            update_sigma_enabled()
+        elif label == 'wiener':
+            settings.use_wiener = not settings.use_wiener
+            set_wiener_enabled(settings.use_wiener)
         elif label == 'bilateral':
             settings.use_bilateral = not settings.use_bilateral
             set_bilateral_enabled(settings.use_bilateral)
@@ -221,8 +233,9 @@ def interactive_debayer(bayer_image: torch.Tensor) -> None:
         settings.bilateral_detail = float(val)
         update_display()
 
-    def on_denoise(val):
-        settings.denoise_amount = float(val)
+    def on_wiener_sigma(val):
+        settings.wiener_sigma = float(val)
+        wiener_workspace.sigma = settings.wiener_sigma
         update_display()
 
     def on_sigma(val):
@@ -253,14 +266,14 @@ def interactive_debayer(bayer_image: torch.Tensor) -> None:
     s_gamma.on_changed(on_gamma)
     s_intensity.on_changed(on_intensity)
     s_detail.on_changed(on_detail)
-    s_denoise.on_changed(on_denoise)
+    s_wiener_sigma.on_changed(on_wiener_sigma)
     s_sigma.on_changed(on_sigma)
     s_light.on_changed(on_light)
     s_sigma_r.on_changed(on_sigma_r)
     s_ppg_med.on_changed(on_ppg_median)
 
     set_bilateral_enabled(settings.use_bilateral)
-    set_denoise_enabled(settings.use_bilateral_denoise)
+    set_wiener_enabled(settings.use_wiener)
     update_sigma_enabled()
     set_ppg_enabled(settings.debayer == 'ppg')
 

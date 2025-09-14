@@ -139,3 +139,15 @@ __device__ __forceinline__ float diff_median3x3(const float3* buf, int w) {
     diff<ch1, ch2>(buf[ w+1])
   );
 }
+
+// Block-level reduction for computing means within a single block
+__device__ __forceinline__ float block_reduce_mean(float value, int count) {
+    __shared__ float result;
+    auto group = cg::coalesced_threads();
+    float sum = cg::reduce(group, value, cg::plus<float>());
+    if (group.thread_rank() == 0) {
+        result = sum / count;
+    }
+    __syncthreads();
+    return result;
+}

@@ -93,17 +93,10 @@ def create_bilateral(
 def bilateral_rgb(
     bilateral: "extension.Bilateral",
     input_image: torch.Tensor,
-    *,
-    detail: float | None = None,
-    denoise: bool = False,
+    detail: float
 ) -> torch.Tensor:
     luminance = extension.compute_luminance(input_image)
-    L = luminance
-    if denoise:
-        L = bilateral.process_denoise(L, float(denoise))
-    if detail is not None and detail != 0.0:
-        L = bilateral.process_contrast(L, float(detail))
-    return extension.modify_luminance(input_image, L)
+    return extension.modify_luminance(input_image, bilateral.process(luminance, float(detail)))
 
 
 

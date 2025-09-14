@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "torch_darktable"
-version = "0.1.0"
+version = "0.1.1"
 description = "CUDA ISP algorithms extracted from darktable for PyTorch"
 authors = [{name = "Oliver Batchelor"}]
 requires-python = ">=3.10"
@@ -18,6 +18,9 @@ dependencies = [
 test-debayer = "torch_darktable.scripts.test_debayer:main"
 test-laplacian = "torch_darktable.scripts.test_laplacian:main"
 test-bilateral = "torch_darktable.scripts.test_bilateral:main"
+test-wiener = "torch_darktable.scripts.test_wiener:main"
+test-denoise = "torch_darktable.scripts.test_wiener:main"
 run-benchmark = "torch_darktable.scripts.run_benchmark:main"
+process-raw = "torch_darktable.scripts.process_raw:main"
 
 

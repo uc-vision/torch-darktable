@@ -5,8 +5,12 @@
 #include "packed.h"
 #include "tonemap/tonemap.h"
 #include "white_balance.h"
+#include "denoise.h"
 
 #include <ATen/ATen.h>
+#include <pybind11/pybind11.h>
+
+namespace py = pybind11;
 
  
 
@@ -33,6 +37,12 @@ std::shared_ptr<Laplacian> create_laplacian(torch::Device device,
 
 std::shared_ptr<Bilateral> create_bilateral(torch::Device device,
   int width, int height, float sigma_s, float sigma_r);
+
+std::shared_ptr<Wiener> create_wiener(torch::Device device, int width, int height,
+  float sigma = 0.1f, float eps = 1e-15f);
+
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wattributes"
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     // Minimal helper to reduce boilerplate for bulk setters
@@ -93,10 +103,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
              py::arg("device"),
              py::arg("width"), py::arg("height"),
              py::arg("sigma_s") = 8.0f, py::arg("sigma_r") = 0.1f)
-        .def("process_contrast", &Bilateral::process_contrast, "Local contrast on luminance with bilateral grid",
+        .def("process", &Bilateral::process, "Local contrast on luminance with bilateral grid",
              py::arg("luminance"), py::arg("detail"))
-        .def("process_denoise", &Bilateral::process_denoise, "Edge-aware denoise (bilateral smoothing)",
-             py::arg("luminance"), py::arg("amount") = 1.0f)
         .def_property("sigma_s", &Bilateral::get_sigma_s, &Bilateral::set_sigma_s, "Spatial sigma")
         .def_property("sigma_r", &Bilateral::get_sigma_r, &Bilateral::set_sigma_r, "Range sigma");
 
@@ -168,4 +176,16 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("estimate_white_balance", &estimate_white_balance, "Estimate white balance from Bayer images",
           py::arg("bayer_images"), py::arg("pattern"), py::arg("quantile") = 0.95f, py::arg("stride") = 8);
 
+    // Wiener denoiser
+    py::class_<Wiener, std::shared_ptr<Wiener>>(m, "Wiener")
+        .def(py::init(&create_wiener), "Create Wiener denoiser",
+             py::arg("device"), py::arg("width"), py::arg("height"),
+             py::arg("sigma") = 0.1f, py::arg("eps") = 1e-15f)
+        .def("process", &Wiener::process, "Process image with Wiener filter",
+             py::arg("input"))
+        .def_property("sigma", &Wiener::get_sigma, &Wiener::set_sigma, "Noise standard deviation")
+        .def_property("eps", &Wiener::get_eps, &Wiener::set_eps, "Regularization epsilon");
+
 }
+
+#pragma GCC diagnostic pop

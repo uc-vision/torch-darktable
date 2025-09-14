@@ -35,12 +35,7 @@ def test_bilateral(image_path: Path, args):
     workspace = create_bilateral(input_rgb.device, (width, height), args.sigma_s, args.sigma_r)
 
     print(f"Parameters: sigma_s={args.sigma_s}, sigma_r={args.sigma_r}")
-    if args.denoise:
-        print(f"  Denoise: enabled (amount={args.denoise})")
-    if args.detail != 0.0:
-        print(f"  Detail enhancement: enabled (detail={args.detail})")
-
-    result_rgb = bilateral_rgb(workspace, input_rgb, detail=args.detail, denoise=args.denoise)
+    result_rgb = bilateral_rgb(workspace, input_rgb, detail=args.detail)
 
     if args.tonemap:
         input_rgb = reinhard(input_rgb)
@@ -65,7 +60,6 @@ def main():
     parser.add_argument('--sigma_r', type=float, default=0.1, help='Range sigma (luminance, 0-1)')
     parser.add_argument('--detail', type=float, default=0.0, help='Detail amount (0 no change, <0 smooth, >0 boost)')
 
-    parser.add_argument('--denoise', type=float, default=0.0, help='Denoise amount (0-1, higher = more denoising)')
     parser.add_argument('--tonemap', action='store_true', help='Tonemap the output image for display')
 
     args = parser.parse_args()

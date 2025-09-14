@@ -17,6 +17,7 @@ from .color_conversion import (
     color_transform_3x3
 )
 from .white_balance import apply_white_balance, estimate_white_balance
+from .utilities import create_wiener
 
 from . import tonemap, debayer, local_contrast, color_conversion, white_balance
 
@@ -44,6 +45,9 @@ __all__ = [
     
     # White balance
     "apply_white_balance", "estimate_white_balance",
+    
+    # Wiener denoising
+    "create_wiener",
 
     # Extension
     "extension",

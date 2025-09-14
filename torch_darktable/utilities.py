@@ -2,6 +2,8 @@ import torch
 import numpy as np
 from pathlib import Path
 from PIL import Image
+from .extension import extension
+from beartype import beartype
 
 
 def load_image(image_path: Path) -> torch.Tensor:
@@ -37,5 +39,28 @@ def rgb_to_bayer(rgb_tensor: torch.Tensor) -> torch.Tensor:
     bayer[1::2, 1::2] = rgb_tensor[1::2, 1::2, 2]  # B (odd rows, odd cols)
     
     return bayer.unsqueeze(-1)
+
+
+@beartype
+def create_wiener(
+    device: torch.device,
+    image_size: tuple[int, int],
+    sigma: float = 0.05,
+    eps: float = 1e-15
+) -> "extension.Wiener":
+    """
+    Create a Wiener denoiser object.
+    
+    Args:
+        device: CUDA device to use
+        image_size: (width, height) of the image
+        sigma: Noise standard deviation
+        eps: Regularization epsilon
+        
+    Returns:
+        Wiener algorithm object
+    """
+    width, height = image_size
+    return extension.Wiener(device, width, height, sigma, eps)
 
 

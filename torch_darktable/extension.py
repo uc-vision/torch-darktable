@@ -4,42 +4,42 @@ from typing import TYPE_CHECKING
 from pathlib import Path
 from torch.utils import cpp_extension
 
-def _load_cuda_extension(debug=False, verbose=False):
-    """Load the CUDA extension with all source files."""
+
+def _load_cuda_extension(debug: bool = False, verbose: bool = False):
     source_dir = Path(__file__).parent / "csrc"
-    
     source_files = [
         "extension.cpp",
         "debayer/bilinear.cu",
         "debayer/ppg.cu",
-        "debayer/rcd.cu", 
+        "debayer/rcd.cu",
         "debayer/postprocess.cu",
         "local_contrast/laplacian.cu",
         "local_contrast/bilateral.cu",
         "color_conversions.cu",
         "packed.cu",
         "tonemap/aces.cu",
-        "tonemap/reinhard.cu"
+        "tonemap/reinhard.cu",
+        "white_balance.cu",
+        "denoise.cu",
     ]
-    
     sources = [str(source_dir / f) for f in source_files]
-    
-    print("Compiling CUDA extension...")
+
     return cpp_extension.load(
         name="torch_darktable_extension",
         sources=sources,
         extra_cflags=["-O3", "-std=c++17"] if not debug else ["-O0", "-g3", "-ggdb3"],
         verbose=verbose,
         with_cuda=True,
-        extra_cuda_cflags=["-G", "-O0",  '-lineinfo'] 
-          if debug else ["-O3", "--expt-relaxed-constexpr", "--use_fast_math"]
+        extra_cuda_cflags=["-G", "-O0", "-lineinfo"] if debug else ["-O3", "--expt-relaxed-constexpr", "--use_fast_math", "-std=c++17"],
     )
+
 
 # Load extension on import, with static types for type checkers
 if TYPE_CHECKING:
     from . import torch_darktable_extension as extension  # type: ignore
 else:
     extension = _load_cuda_extension(verbose=True)
+
 
 # readable representations for algorithm classes
 def _install_algorithm_repr() -> None:

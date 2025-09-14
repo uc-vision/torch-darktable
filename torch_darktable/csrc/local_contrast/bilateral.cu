@@ -258,8 +258,8 @@ struct BilateralImpl : public Bilateral
     // Cache tensors for efficiency; infer grid dims from current parameters when (re)allocating
     torch::Tensor dev_grid;
     torch::Tensor dev_grid_tmp;
-    torch::Tensor dev_grid_num; // for denoise (sum of w*L)
-    torch::Tensor dev_grid_den; // for denoise (sum of w)
+    torch::Tensor dev_grid_num; // reserved
+    torch::Tensor dev_grid_den; // reserved
 
     BilateralImpl(torch::Device device,
                   int width, int height,
@@ -347,22 +347,11 @@ struct BilateralImpl : public Bilateral
         }
     }
 
-    // Ensure buffers for denoise mode (num, den, tmp, and scratch grid)
-    void ensure_denoise_buffers(int sx, int sy, int sz)
-    {
-        auto opts = torch::TensorOptions().device(device_).dtype(torch::kFloat32);
-        if (!dev_grid_den.defined() || !dev_grid_num.defined()) {
-            dev_grid_num = torch::empty({sz, sy, sx}, opts);
-            dev_grid_den = torch::empty({sz, sy, sx}, opts);
-            dev_grid_tmp = torch::empty({sz, sy, sx}, opts);
-            // scratch buffer used in numerator blur passes
-            dev_grid = torch::empty({sz, sy, sx}, opts);
-        }
-    }
+    // removed denoise buffers
 
     
 
-    torch::Tensor process_contrast(const torch::Tensor &luminance, float detail) override
+    torch::Tensor process(const torch::Tensor &luminance, float detail) override
     {
         check_input_image(luminance);
 
@@ -388,48 +377,6 @@ struct BilateralImpl : public Bilateral
             luminance.data_ptr<float>(), dev_grid_tmp.data_ptr<float>(), output.data_ptr<float>(),
             width, height, sx, sy, sz, sigma_s, sigma_r, detail);
 
-        return output;
-    }
-
-    // Edge-aware denoise using bilateral grid weighted average
-    torch::Tensor process_denoise(const torch::Tensor &luminance, float amount) override
-    {
-        check_input_image(luminance);
-
-        auto stream = c10::cuda::getCurrentCUDAStream();
-
-        auto [sx, sy, sz] = compute_grid_size();
-        ensure_denoise_buffers(sx, sy, sz);
-        dev_grid_num.zero_();
-        dev_grid_den.zero_();
-
-        // Reuse splat kernel twice: once for weights, once for weighted luminance by scaling input
-        splat_kernel<<<grid2d(width, height), block_size_2d, 0, stream.stream()>>>(
-            luminance.data_ptr<float>(), dev_grid_den.data_ptr<float>(),
-            width, height, sx, sy, sz, sigma_s, sigma_r);
-    
-        // For numerator, call a specialized splat that multiplies by L. Implement with a simple wrapper kernel
-        // to avoid extra memory writes; here we reuse slice logic by computing weights then scaling by L at slice,
-        // but to keep it faithful, we splat L as well by calling splat with a temporary that is L (same as weights but accumulated separately)
-        // Numerator splat (sum of w * L)
-        splat_num_kernel<<<grid2d(width, height), block_size_2d, 0, stream.stream()>>>(
-            luminance.data_ptr<float>(), dev_grid_num.data_ptr<float>(),
-            width, height, sx, sy, sz, sigma_s, sigma_r);
-
-        // Blur both grids (Gaussian along Z)
-        blur_xy(dev_grid_den, dev_grid_tmp, dev_grid_den, sx, sy, sz, stream.stream());
-        blur_z_gaussian(dev_grid_den, dev_grid_tmp, sx, sy, sz, stream.stream());
-        blur_xy(dev_grid_num, dev_grid, dev_grid_num, sx, sy, sz, stream.stream());
-        blur_z_gaussian(dev_grid_num, dev_grid, sx, sy, sz, stream.stream());
-
-        auto output = torch::empty({height, width}, luminance.options());
-        slice_denoise_kernel<<<grid2d(width, height), block_size_2d, 0, stream.stream()>>>(
-            luminance.data_ptr<float>(),
-            dev_grid_num.data_ptr<float>(),
-            dev_grid_den.data_ptr<float>(),
-            output.data_ptr<float>(),
-            width, height, sx, sy, sz, sigma_s, sigma_r, amount);
-    
         return output;
     }
 

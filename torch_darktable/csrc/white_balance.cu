@@ -1,7 +1,7 @@
 #include <cuda_runtime.h>
 #include <torch/torch.h>
-#include "demosaic/demosaic.h"
-#include "demosaic/bayer_device.h"
+#include "debayer/demosaic.h"
+#include "debayer/bayer_device.h"
 #include "reduction.h"
 #include "device_math.h"
 #include "cuda_utils.h"
@@ -28,10 +28,6 @@ __global__ void apply_white_balance_kernel(
     switch (channel) {
         case 0: // R
             gain = wb_gains.x;
-            break;
-        case 1: // G
-        case 3: // G (second green)
-            gain = wb_gains.y;
             break;
         case 2: // B
             gain = wb_gains.z;
@@ -64,23 +60,25 @@ __global__ void collect_color_samples_kernel(
     const int width,
     const int height,
     const int stride,
-    __restrict__ float* chromacities,
-    __restrict__ float* intensities,
-    __restrict__ bool* mask
+    float* chromacities,
+    float* intensities,
+    bool* mask
 ) {
     // Each thread processes one 2x2 patch with stride
-    int2 idx = pixel_index();
+    int2 pos = pixel_index();
     if (pos.x + 1 >= width / stride || pos.y + 1 >= height / stride) return;
     
-    float4 bayer = load_bayer_2x2(bayer_image, width, idx * 2);
+    float4 bayer = load_bayer_2x2(bayer_image, width, pos * 2);
     float3 rgb = bayer_2x2_to_rgb(bayer.x, bayer.y, bayer.z, bayer.w, pattern);
 
-    intensity = rgb.x + rgb.y + rgb.z;
-    float2_store(float2(rgb.x / intensity, rgb.y / intensity), 
-      chromacities, idx.y * width + idx.x);
+    float intensity = rgb.x + rgb.y + rgb.z;
+    int linear_idx = pos.y * (width / stride) + pos.x;
+    chromacities[linear_idx * 2 + 0] = rgb.x / intensity;
+    chromacities[linear_idx * 2 + 1] = rgb.y / intensity;
 
-    intensities[idx.y * width + idx.x] = intensity;
-    mask[idx.y * width + idx.x] = max_float4(bayer) < 1.0f;
+    intensities[linear_idx] = intensity;
+    float max_bayer = fmaxf(fmaxf(bayer.x, bayer.y), fmaxf(bayer.z, bayer.w));
+    mask[linear_idx] = max_bayer < 1.0f;
 }
 
 __device__ __forceinline__ float max_float4(const float4& v) {
@@ -173,11 +171,11 @@ torch::Tensor apply_white_balance(
     const int height = bayer_image.size(0);
     const int width = bayer_image.size(1);
     
-    const float3 gains = make_float3(
+    const float3 wb_gains = make_float3(
       gains[0].item<float>(), gains[1].item<float>(), gains[2].item<float>());
     
     apply_white_balance_kernel<<<grid2d(width, height), block_size_2d>>>(
-        result.data_ptr<float>(), gains, pattern, width, height
+        result.data_ptr<float>(), wb_gains, pattern, width, height
     );
     
     cudaDeviceSynchronize();
