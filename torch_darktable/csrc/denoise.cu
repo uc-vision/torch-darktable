@@ -37,7 +37,7 @@ __device__ __forceinline__ int get_tile_idx() {
 }
 
 __device__ __forceinline__ int reflect_index(int x, int limit) {
-    if (x < 0) x = -x - 1;
+    if (x < 0) x = -x;
     if (x >= limit) x = 2 * limit - x - 1;
     return x;
 }
@@ -52,7 +52,9 @@ __device__ void load_tile(
     int tile_idx = get_tile_idx();
     
     // Load one pixel with reflect padding
-    int2 src_pos = g * stride + t;
+    // Shift grid to start earlier for proper boundary coverage
+    int2 grid_offset = {K / stride, K / stride};  // Shift by one tile
+    int2 src_pos = (g - grid_offset) * stride + t;
     int2 refl_pos = make_int2(reflect_index(src_pos.x, W), reflect_index(src_pos.y, H));
     float val = img[(refl_pos.y * W + refl_pos.x) * C + c];  // HWC layout
     tile_data[tile_idx] = Complex(val, 0.0f);
@@ -68,8 +70,9 @@ __device__ void store_tile(
     int2 t = get_thread_pos();
     int tile_idx = get_tile_idx();
     
-    // Store one pixel back to output
-    int2 out_pos = g * stride + t + K;  // Add padding offset
+    // Store one pixel back to output  
+    int2 grid_offset = {K / stride, K / stride};  // Same shift as load
+    int2 out_pos = (g - grid_offset) * stride + t + K;  // Add padding offset
     if (out_pos.y < H_pad && out_pos.x < W_pad) {
         float reconstructed = (tile_data[tile_idx].x + mean_val * d_window[tile_idx]) * d_interp_window[tile_idx];
         atomicAdd(&out[(out_pos.y * W_pad + out_pos.x) * C + c], reconstructed);  // HWC layout
@@ -129,7 +132,19 @@ __global__ void wiener_tile_kernel(
         float mean_val = apply_zero_mean_window(tile_data);
         cg::this_thread_block().sync();
         
-        // 7. Store tile back to output (add mean back)
+        // 3. Forward 2D FFT
+        fft_2d(tile_data);
+        cg::this_thread_block().sync();
+        
+        // 4. Apply Wiener gain
+        apply_wiener_gain(tile_data, noise_power, eps);
+        cg::this_thread_block().sync();
+        
+        // 5. Inverse 2D FFT
+        ifft_2d(tile_data);
+        cg::this_thread_block().sync();
+        
+        // 6. Store tile back to output (add mean back)
         store_tile(out, mask, tile_data, c, stride, H_pad, W_pad, C, mean_val);
     }  // End channel loop
 }
@@ -205,8 +220,11 @@ struct CudaWiener final : public Wiener {
         const int stride = K / 4;  // K/4 overlap = 8
         const int h_pad = H + 2 * K;
         const int w_pad = W + 2 * K;
-        const int grid_h = (H + stride - 1) / stride;  // Cover input space
-        const int grid_w = (W + stride - 1) / stride;
+        
+        // Grid needs to start earlier to cover boundaries with proper overlap
+        const int grid_start = -(K / stride);  // Start early for boundary coverage
+        const int grid_h = (H + K + stride - 1) / stride - grid_start;  // Extended coverage
+        const int grid_w = (W + K + stride - 1) / stride - grid_start;
         
         auto padded_out = torch::zeros({h_pad, w_pad, C}, input.options());
         auto mask = torch::zeros({h_pad, w_pad}, input.options());
