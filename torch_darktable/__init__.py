@@ -1,13 +1,15 @@
 """PyTorch CUDA extensions for image processing and computer vision."""
 
 # Import all modules
-from . import extension
+from . import extension, tonemap, debayer, local_contrast, color_conversion, white_balance, denoise
+
 from .tonemap import Reinhard, aces_tonemap, compute_image_bounds
 from .debayer import (
     BayerPattern, Packed12Format,
     create_ppg, create_rcd, create_postprocess,
     encode12, decode12,
     encode12_u16, encode12_float, decode12_float, decode12_half, decode12_u16,
+    bilinear5x5_demosaic
 )
 from .local_contrast import LaplacianParams, create_laplacian, local_laplacian_rgb, create_bilateral, bilateral_rgb
 from .color_conversion import (
@@ -17,9 +19,8 @@ from .color_conversion import (
     color_transform_3x3
 )
 from .white_balance import apply_white_balance, estimate_white_balance
-from .utilities import Wiener, create_wiener, estimate_channel_noise
+from .denoise import Wiener, create_wiener, estimate_channel_noise
 
-from . import tonemap, debayer, local_contrast, color_conversion, white_balance
 
 __all__ = [
     # Core classes and enums
@@ -29,7 +30,7 @@ __all__ = [
     "aces_tonemap", "compute_image_bounds",
     
     # Debayering and 12-bit encoding
-    "create_ppg", "create_rcd", "create_postprocess", "Packed12Format",
+    "create_ppg", "create_rcd", "create_postprocess", "Packed12Format", "bilinear5x5_demosaic",
     "encode12", "decode12",
     "encode12_u16", "encode12_float", "decode12_float", "decode12_half", "decode12_u16",
     
@@ -49,21 +50,12 @@ __all__ = [
     # Wiener denoising
     "Wiener", "create_wiener", "estimate_channel_noise",
 
-    # Extension
+    # Submodules
     "extension",
-
-    # Tonemap
     "tonemap",
-
-    # Debayer
     "debayer",
-    
-    # Local contrast
     "local_contrast",
-
-    # Color conversion
     "color_conversion",
-
-    # White balance
-    "white_balance"
+    "white_balance",
+    "denoise",
 ]

@@ -151,3 +151,32 @@ __device__ __forceinline__ float block_reduce_mean(float value, int count) {
     __syncthreads();
     return result;
 }
+
+
+// Exact median computation within a warp using bitonic sort
+__device__ __forceinline__ float warp_median(float my_val) {
+    // Exact median using bitonic sort within warp (32 values)
+    auto warp = cg::tiled_partition<32>(cg::this_thread_block());
+    int tid = warp.thread_rank();
+    
+    // Bitonic sort: 5 stages for 32 elements
+    for (int stage = 0; stage < 5; stage++) {
+        for (int step = stage; step >= 0; step--) {
+            int partner = tid ^ (1 << step);
+            float partner_val = warp.shfl(my_val, partner);
+            
+            bool ascending = ((tid >> (stage + 1)) & 1) == 0;
+            bool should_swap = (my_val > partner_val) == ascending;
+            
+            if (should_swap && partner > tid) {
+                my_val = partner_val;
+            }
+        }
+    }
+    
+    // After sorting, thread 15 and 16 have the median values
+    float median15 = warp.shfl(my_val, 15);
+    float median16 = warp.shfl(my_val, 16);
+    
+    return (median15 + median16) / 2.0f;  // Exact median of 32 values
+}

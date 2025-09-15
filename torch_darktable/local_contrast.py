@@ -63,13 +63,15 @@ def local_laplacian_rgb(
     Returns:
         Filtered RGB image tensor
     """
-    return laplacian.process(input_image)
+    luminance = extension.compute_luminance(input_image)
+    return extension.modify_luminance(input_image, laplacian.process(luminance))
 
 
 @beartype
 def create_bilateral(
     device: torch.device,
     image_size: tuple[int, int],
+    *,
     sigma_s: float,
     sigma_r: float,
 ) -> "extension.Bilateral":

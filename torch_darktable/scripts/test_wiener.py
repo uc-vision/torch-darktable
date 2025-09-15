@@ -35,8 +35,7 @@ def test_denoise(image_path: Path, args):
 
     # Keep in HWC format (no conversion needed)
     print("Creating Wiener denoiser...")
-    wiener = td.create_wiener(input_rgb.device, width, height, args.sigma, args.eps, args.overlap_factor)
-    print(f"Parameters: sigma={args.sigma}, eps={args.eps}, overlap_factor={args.overlap_factor}")
+    wiener = td.create_wiener(input_rgb.device, (width, height), overlap=args.overlap)
 
     print("Processing...")
     with torch.no_grad():     
@@ -61,8 +60,7 @@ def main():
     parser = argparse.ArgumentParser(description='Test CUDA Wiener denoiser on an image')
     parser.add_argument('image', type=Path, help='Input image path')
     parser.add_argument('--sigma', type=float, default=0.05, help='Noise standard deviation (manual mode)')
-    parser.add_argument('--eps', type=float, default=1e-15, help='Regularization epsilon')
-    parser.add_argument('--overlap-factor', type=int, default=4, help='Overlap factor: 2=half, 4=quarter, 8=eighth block overlap')
+    parser.add_argument('--overlap', type=int, choices=[1, 2, 4, 8, 16], default=4, help='Overlap factor: 2=half, 4=quarter, 8=eighth block overlap')
 
     parser.add_argument('--estimate-noise', action='store_true', help='Use automatic per-channel noise estimation')
     parser.add_argument('--noise-scale', type=float, default=1.0, help='Scale factor for noise estimation (auto mode only)')

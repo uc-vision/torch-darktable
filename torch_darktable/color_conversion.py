@@ -2,8 +2,10 @@
 
 import torch
 from .extension import extension
+from beartype import beartype
 
 
+@beartype
 def compute_luminance(rgb_image: torch.Tensor) -> torch.Tensor:
     """
     Compute luminance from RGB image.
@@ -17,6 +19,7 @@ def compute_luminance(rgb_image: torch.Tensor) -> torch.Tensor:
     return extension.compute_luminance(rgb_image)
 
 
+@beartype
 def modify_luminance(
     rgb_image: torch.Tensor,
     luminance_multiplier: torch.Tensor
@@ -34,6 +37,7 @@ def modify_luminance(
     return extension.modify_luminance(rgb_image, luminance_multiplier)
 
 
+@beartype
 def rgb_to_lab(rgb_image: torch.Tensor) -> torch.Tensor:
     """
     Convert RGB to CIELAB color space.
@@ -47,6 +51,7 @@ def rgb_to_lab(rgb_image: torch.Tensor) -> torch.Tensor:
     return extension.rgb_to_lab(rgb_image)
 
 
+@beartype
 def lab_to_rgb(lab_image: torch.Tensor) -> torch.Tensor:
     """
     Convert CIELAB to RGB color space.
@@ -60,6 +65,7 @@ def lab_to_rgb(lab_image: torch.Tensor) -> torch.Tensor:
     return extension.lab_to_rgb(lab_image)
 
 
+@beartype
 def rgb_to_xyz(rgb_image: torch.Tensor) -> torch.Tensor:
     """
     Convert RGB to CIE XYZ color space.
@@ -73,6 +79,7 @@ def rgb_to_xyz(rgb_image: torch.Tensor) -> torch.Tensor:
     return extension.rgb_to_xyz(rgb_image)
 
 
+@beartype
 def xyz_to_lab(xyz_image: torch.Tensor) -> torch.Tensor:
     """
     Convert CIE XYZ to CIELAB color space.
@@ -86,6 +93,7 @@ def xyz_to_lab(xyz_image: torch.Tensor) -> torch.Tensor:
     return extension.xyz_to_lab(xyz_image)
 
 
+@beartype
 def lab_to_xyz(lab_image: torch.Tensor) -> torch.Tensor:
     """
     Convert CIELAB to CIE XYZ color space.
@@ -99,6 +107,7 @@ def lab_to_xyz(lab_image: torch.Tensor) -> torch.Tensor:
     return extension.lab_to_xyz(lab_image)
 
 
+@beartype
 def xyz_to_rgb(xyz_image: torch.Tensor) -> torch.Tensor:
     """
     Convert CIE XYZ to RGB color space.
@@ -112,6 +121,7 @@ def xyz_to_rgb(xyz_image: torch.Tensor) -> torch.Tensor:
     return extension.xyz_to_rgb(xyz_image)
 
 
+@beartype
 def color_transform_3x3(image: torch.Tensor, matrix_3x3: torch.Tensor) -> torch.Tensor:
     """
     Apply a 3x3 color transformation matrix to an RGB image with clamping to [0,1].

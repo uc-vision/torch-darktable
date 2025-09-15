@@ -32,7 +32,7 @@ def test_bilateral(image_path: Path, args):
     print(f"Image size: {width}x{height}x{channels}")
 
     print("Creating Bilateral algorithm...")
-    workspace = create_bilateral(input_rgb.device, (width, height), args.sigma_s, args.sigma_r)
+    workspace = create_bilateral(input_rgb.device, (width, height), sigma_s=args.sigma_s, sigma_r=args.sigma_r)
 
     print(f"Parameters: sigma_s={args.sigma_s}, sigma_r={args.sigma_r}")
     result_rgb = bilateral_rgb(workspace, input_rgb, detail=args.detail)

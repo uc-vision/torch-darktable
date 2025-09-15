@@ -38,11 +38,18 @@ def benchmark(name: str, func: Callable, *args, warmup_iters: int = 5, bench_ite
 
 def run_benchmark(image_path: Path, pattern: BayerPattern, warmup_iters: int = 5,
                  bench_iters: int = 50):
+
+    torch.set_grad_enabled(False)
+
     print(f"Loading image: {image_path}")
 
     # Load and convert image (not timed)
     rgb_tensor = load_image(image_path)
     bayer_input = rgb_to_bayer(rgb_tensor)
+
+
+
+
     height, width = bayer_input.shape[:2]
 
     print(f"Image size: {width}x{height}")
@@ -61,6 +68,14 @@ def run_benchmark(image_path: Path, pattern: BayerPattern, warmup_iters: int = 5
     
     bilateral_2x2 = td.create_bilateral(bayer_input.device, (width, height), sigma_s=2.0, sigma_r=0.2)
     bilateral_8x1 = td.create_bilateral(bayer_input.device, (width, height), sigma_s=8.0, sigma_r=0.1)
+    
+    wiener_alg = td.create_wiener(bayer_input.device, (width, height), overlap=2)
+
+    print("=== Denoise Benchmarks ===")
+
+
+    benchmark("Wiener Denoise", partial(wiener_alg.process, noise=0.05), rgb_tensor, warmup_iters=warmup_iters, bench_iters=bench_iters)
+    benchmark("Estimate Noise", td.estimate_channel_noise, rgb_tensor, warmup_iters=warmup_iters, bench_iters=bench_iters)
 
     print("=== Demosaic Algorithm Benchmarks ===")
 
@@ -80,22 +95,23 @@ def run_benchmark(image_path: Path, pattern: BayerPattern, warmup_iters: int = 5
 
     mono_tensor = td.compute_luminance(rgb_tensor)
     benchmark("Laplacian", laplacian_alg.process, mono_tensor, warmup_iters=warmup_iters, bench_iters=bench_iters)
-    benchmark("Bilateral Contrast", partial(bilateral_2x2.process_contrast, detail=0.2), mono_tensor, warmup_iters=warmup_iters, bench_iters=bench_iters)
-    benchmark("Bilateral Contrast", partial(bilateral_8x1.process_contrast, detail=0.2), mono_tensor, warmup_iters=warmup_iters, bench_iters=bench_iters)
+    benchmark("Bilateral Contrast", partial(bilateral_2x2.process, detail=0.2), mono_tensor, warmup_iters=warmup_iters, bench_iters=bench_iters)
+    benchmark("Bilateral Contrast", partial(bilateral_8x1.process, detail=0.2), mono_tensor, warmup_iters=warmup_iters, bench_iters=bench_iters)
 
-    benchmark("Bilateral Denoise RGB", partial(bilateral_2x2.process_denoise, amount=0.2), rgb_tensor, warmup_iters=warmup_iters, bench_iters=bench_iters)
-    benchmark("Bilateral Denoise RGB", partial(bilateral_8x1.process_denoise, amount=0.2), rgb_tensor, warmup_iters=warmup_iters, bench_iters=bench_iters)
+
+
 
 
 
 def main():
     parser = argparse.ArgumentParser(description='Benchmark demosaic algorithms and post-processing')
     parser.add_argument('image', type=Path, help='Input image path')
+
     parser.add_argument('--pattern', type=str, default='RGGB', choices=[p.name for p in BayerPattern],
                        help='Bayer pattern (default: RGGB)')
     parser.add_argument('--warmup-iters', type=int, default=5,
                        help='Number of warmup iterations (default: 5)')
-    parser.add_argument('--bench-iters', type=int, default=1000,
+    parser.add_argument('--bench-iters', type=int, default=100,
                        help='Number of benchmark iterations (default: 50)')
     
     args = parser.parse_args()

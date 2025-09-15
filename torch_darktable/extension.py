@@ -74,6 +74,8 @@ def _install_algorithm_repr() -> None:
             f"sigma_r={self.sigma_r})"
         )
 
+
+
     extension.PPG.__repr__ = _ppg_repr
     extension.RCD.__repr__ = _rcd_repr
     extension.PostProcess.__repr__ = _postprocess_repr

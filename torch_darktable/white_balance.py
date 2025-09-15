@@ -3,8 +3,10 @@
 import torch
 from .extension import extension
 from .debayer import BayerPattern
+from beartype import beartype
 
 
+@beartype
 def apply_white_balance(
     bayer_image: torch.Tensor,
     gains: torch.Tensor,
@@ -24,6 +26,7 @@ def apply_white_balance(
     return extension.apply_white_balance(bayer_image, gains, pattern)
 
 
+@beartype
 def estimate_white_balance(
     bayer_images: list[torch.Tensor],
     pattern: BayerPattern,

@@ -7,7 +7,8 @@ from dataclasses import dataclass
 from typing import Literal
 
 import matplotlib.pyplot as plt
-from matplotlib.widgets import Slider, RadioButtons, CheckButtons
+from matplotlib.widgets import Slider, RadioButtons, CheckButtons, Button
+from PIL import Image
 
 from image_isp.load import add_camera_settings, load_raw_image, settings_from_args, stack_bayer
 import torch_darktable as td
@@ -31,7 +32,7 @@ def parse_args():
 
 @dataclass
 class Settings:
-    debayer: Literal['linear', 'rcd', 'ppg'] = 'rcd'
+    debayer: Literal['bilinear', 'rcd', 'ppg'] = 'rcd'
     tonemap_method: Literal['reinhard', 'aces', 'linear'] = 'reinhard'
     use_postprocess: bool = True
     use_bilateral: bool = True
@@ -44,10 +45,10 @@ class Settings:
     tonemap_gamma: float = 0.75
     tonemap_intensity: float = 2.0
     tonemap_light_adapt: float = 0.9
-    wiener_sigma: float = 0.05
+    wiener_sigma: float = 0.005
 
 
-def interactive_debayer(bayer_image: torch.Tensor) -> None:
+def interactive_debayer(bayer_image: torch.Tensor, input_path: Path) -> None:
     device = bayer_image.device
     image_size = (bayer_image.shape[1], bayer_image.shape[0])
 
@@ -64,25 +65,25 @@ def interactive_debayer(bayer_image: torch.Tensor) -> None:
 
     rcd_workspace = td.create_rcd(device, image_size, td.BayerPattern.RGGB, input_scale=1.0, output_scale=1.0)
     ppg_workspace = td.create_ppg(device, image_size, td.BayerPattern.RGGB, median_threshold=0.25)
-    postprocess_workspace = td.create_postprocess(device, image_size, td.BayerPattern.RGGB, color_smoothing_passes=1, green_eq_local=True, green_eq_global=True, green_eq_threshold=0.01)
-    wiener_workspace = td.create_wiener(device, image_size, settings.wiener_sigma)
+    postprocess_workspace = td.create_postprocess(device, image_size, td.BayerPattern.RGGB, color_smoothing_passes=5, green_eq_local=True, green_eq_global=True, green_eq_threshold=0.001)
+    wiener_workspace = td.create_wiener(device, image_size)
 
     def compute_rgb() -> np.ndarray:
         # Use torch_darktable linear debayer
-        if settings.debayer == 'linear':
+        if settings.debayer == 'bilinear':
             rgb_raw = td.bilinear5x5_demosaic(bayer_image.unsqueeze(-1), td.BayerPattern.RGGB)
         elif settings.debayer == 'rcd':
             rgb_raw = rcd_workspace.process(bayer_image.unsqueeze(-1))
-        else:  # PPG
+        elif settings.debayer == 'ppg':
             rgb_raw = ppg_workspace.process(bayer_image.unsqueeze(-1))
+        else:
+            assert False, f"Invalid debayer method: {settings.debayer}"
 
-        if settings.use_postprocess and settings.debayer != 'linear':
+        if settings.use_postprocess:
             rgb_raw = postprocess_workspace.process(rgb_raw)
 
         if settings.use_wiener:
-            rgb_chw = rgb_raw.permute(2, 0, 1)
-            rgb_chw = wiener_workspace.process(rgb_chw)
-            rgb_raw = rgb_chw.permute(1, 2, 0)
+            rgb_raw = wiener_workspace.process((rgb_raw + 1e-4).log(), settings.wiener_sigma).exp()
 
         if settings.use_bilateral:
             rgb_raw = td.bilateral_rgb(
@@ -124,7 +125,7 @@ def interactive_debayer(bayer_image: torch.Tensor) -> None:
 
     # Left column: radio + compact checkboxes
     ax_debayer = plt.axes((0.05, 0.205, 0.14, 0.1))
-    rb = RadioButtons(ax_debayer, ('linear', 'rcd', 'ppg'), active=('linear', 'rcd', 'ppg').index(settings.debayer))
+    rb = RadioButtons(ax_debayer, ('bilinear', 'rcd', 'ppg'), active=('bilinear', 'rcd', 'ppg').index(settings.debayer))
 
 
     ax_checks = plt.axes((0.05, 0.09, 0.14, 0.1))
@@ -157,9 +158,9 @@ def interactive_debayer(bayer_image: torch.Tensor) -> None:
     ax_gamma, ax_intensity, ax_light, ax_detail, ax_sigma, ax_sigma_r, ax_wiener_sigma, ax_ppg_med = create_axes_vertical(8)
 
     # Tonemap group
-    s_gamma = Slider(ax_gamma, 'tm_gamma', 0.1, 3.0, valinit=settings.tonemap_gamma)
-    s_intensity = Slider(ax_intensity, 'tm_intensity', 0.1, 10.0, valinit=settings.tonemap_intensity)
-    s_light = Slider(ax_light, 'tm_light_adapt', 0.0, 1.0, valinit=settings.tonemap_light_adapt)
+    s_gamma = Slider(ax_gamma, 'gamma', 0.1, 3.0, valinit=settings.tonemap_gamma)
+    s_intensity = Slider(ax_intensity, 'intensity', 0.1, 10.0, valinit=settings.tonemap_intensity)
+    s_light = Slider(ax_light, 'light_adapt', 0.0, 1.0, valinit=settings.tonemap_light_adapt)
     
     # Bilateral group
     s_detail = Slider(ax_detail, 'bil_detail', 0.0, 2.0, valinit=settings.bilateral_detail)
@@ -167,10 +168,14 @@ def interactive_debayer(bayer_image: torch.Tensor) -> None:
     s_sigma_r = Slider(ax_sigma_r, 'bil_sigma_r', 0.01, 0.5, valinit=settings.bilateral_sigma_r)
     
     # Wiener group
-    s_wiener_sigma = Slider(ax_wiener_sigma, 'wiener_sigma', 0.001, 0.2, valinit=settings.wiener_sigma)
+    s_wiener_sigma = Slider(ax_wiener_sigma, 'wiener_sigma', 0.001, 0.5, valinit=settings.wiener_sigma)
     
     # PPG group
     s_ppg_med = Slider(ax_ppg_med, 'ppg_median', 0.0, 1.0, valinit=settings.ppg_median_threshold)
+    
+    # Save button
+    ax_save = plt.axes((0.22, 0.015, 0.06, 0.04))
+    btn_save = Button(ax_save, 'Save JPEG')
 
     ax_detail.set_zorder(10)
     ax_sigma.set_zorder(10)
@@ -235,7 +240,6 @@ def interactive_debayer(bayer_image: torch.Tensor) -> None:
 
     def on_wiener_sigma(val):
         settings.wiener_sigma = float(val)
-        wiener_workspace.sigma = settings.wiener_sigma
         update_display()
 
     def on_sigma(val):
@@ -259,6 +263,21 @@ def interactive_debayer(bayer_image: torch.Tensor) -> None:
         settings.ppg_median_threshold = float(val)
         ppg_workspace.median_threshold = settings.ppg_median_threshold
         update_display()
+    
+    def on_save_jpeg(event):
+        # Get current processed image
+        rgb_array = compute_rgb()
+        
+        # Convert to PIL Image and save as JPEG
+        if rgb_array.dtype != np.uint8:
+            rgb_array = (rgb_array * 255).astype(np.uint8)
+        
+        pil_image = Image.fromarray(rgb_array)
+        
+        # Create JPEG filename from input path
+        output_path = input_path.with_suffix('.jpg')
+        pil_image.save(output_path, 'JPEG', quality=95)
+        print(f"Saved JPEG to: {output_path}")
 
     rb.on_clicked(on_rb)
     rb_tm.on_clicked(on_rb_tm)
@@ -271,6 +290,7 @@ def interactive_debayer(bayer_image: torch.Tensor) -> None:
     s_light.on_changed(on_light)
     s_sigma_r.on_changed(on_sigma_r)
     s_ppg_med.on_changed(on_ppg_median)
+    btn_save.on_clicked(on_save_jpeg)
 
     set_bilateral_enabled(settings.use_bilateral)
     set_wiener_enabled(settings.use_wiener)
@@ -287,7 +307,7 @@ def main():
     camera_settings = settings_from_args(args)
 
     bayer_image = load_raw_image(args.input, camera_settings) * camera_settings.brightness
-    interactive_debayer(bayer_image)
+    interactive_debayer(bayer_image, args.input)
 
 
 if __name__ == "__main__":

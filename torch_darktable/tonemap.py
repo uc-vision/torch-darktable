@@ -9,6 +9,7 @@ class Reinhard:
     """Reinhard tone mapping algorithm with utilities for working with image metrics."""
     
     @staticmethod
+    @beartype
     def compute_metrics(image: torch.Tensor, stride: int = 8, min_gray: float = 1e-4) -> torch.Tensor:
         """
         Compute image statistics for Reinhard tone mapping.
@@ -27,6 +28,7 @@ class Reinhard:
         return extension.compute_image_metrics([image], stride, min_gray)
     
     @staticmethod
+    @beartype
     def metrics_to_dict(metrics: torch.Tensor) -> dict[str, float]:
         """Convert 9-element metrics tensor to named dictionary."""
         assert metrics.numel() == 9, f"Expected 9 elements, got {metrics.numel()}"
@@ -44,6 +46,7 @@ class Reinhard:
         }
     
     @staticmethod
+    @beartype
     def metrics_from_dict(metrics_dict: dict[str, float], device: torch.device = torch.device('cuda')) -> torch.Tensor:
         """Convert named dictionary to 9-element metrics tensor."""
         return torch.tensor([
@@ -54,6 +57,7 @@ class Reinhard:
         ], device=device, dtype=torch.float32)
     
     @staticmethod
+    @beartype
     def print_metrics(metrics: torch.Tensor):
         """Print metrics in a nicely formatted way."""
         d = Reinhard.metrics_to_dict(metrics)
@@ -65,6 +69,7 @@ class Reinhard:
         print(f"  RGB Mean: ({d['rgb_mean_r']:.4f}, {d['rgb_mean_g']:.4f}, {d['rgb_mean_b']:.4f})")
     
     @staticmethod 
+    @beartype
     def tonemap(
         image: torch.Tensor,
         metrics: torch.Tensor,

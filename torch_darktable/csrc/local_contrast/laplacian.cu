@@ -448,6 +448,12 @@ struct LaplacianImpl : public Laplacian
                     "Input tensor dimensions must match workspace dimensions");
         TORCH_CHECK(input.is_cuda(), "Input tensor must be on CUDA device");
 
+        
+        // Ensure buffers are allocated before first use
+        if (dev_padded.empty()) {
+            allocate_buffers();
+        }
+
         auto stream = c10::cuda::getCurrentCUDAStream();
 
         // Create output tensor
@@ -472,16 +478,35 @@ struct LaplacianImpl : public Laplacian
         return output;
     }
     
+    // Buffer allocation
+    void allocate_buffers()
+    {
+        for(int l = 0; l < num_levels; l++)
+        {
+            const int level_width = dl(bwidth, l);
+            const int level_height = dl(bheight, l);
+
+            dev_padded.push_back(torch::empty({level_height, level_width}, torch::device(torch::kCUDA).dtype(torch::kFloat16)));
+            dev_output.push_back(torch::empty({level_height, level_width}, torch::device(torch::kCUDA).dtype(torch::kFloat16)));
+
+            if (l == 0) {
+                for(int k = 0; k < num_gamma; k++) dev_processed[k].clear();
+            }
+            for(int k = 0; k < num_gamma; k++) {
+                auto tensor = torch::empty({level_height, level_width}, torch::device(torch::kCUDA).dtype(torch::kFloat16));
+                dev_processed[k].push_back(tensor);
+            }
+        }
+    }
+    
     // Helper functions for processing steps
     void pad_input_step(const torch::Tensor& input)
     {
         auto stream = c10::cuda::getCurrentCUDAStream();
-        
-        dim3 block = block_size_2d;
-        dim3 grid = grid2d(bwidth, bheight);
+
         
         // Pad directly to fp16 storage
-        pad_input_half<<<grid, block, 0, stream.stream()>>>(
+        pad_input_half<<<grid2d(bwidth, bheight), block_size_2d, 0, stream.stream()>>>(
             input.data_ptr<float>(), padded_ptr(0),
             make_int2(width, height), max_supp,
             make_int2(bwidth, bheight));
@@ -490,36 +515,13 @@ struct LaplacianImpl : public Laplacian
     void build_gaussian_pyramid_step()
     {
         auto stream = c10::cuda::getCurrentCUDAStream();
-
-        // Lazy allocate if needed
-        if (dev_padded.empty()) {
-            for(int l = 0; l < num_levels; l++)
-            {
-                const int level_width = dl(bwidth, l);
-                const int level_height = dl(bheight, l);
-
-                dev_padded.push_back(torch::empty({level_height, level_width}, torch::device(torch::kCUDA).dtype(torch::kFloat16)));
-                dev_output.push_back(torch::empty({level_height, level_width}, torch::device(torch::kCUDA).dtype(torch::kFloat16)));
-
-                if (l == 0) {
-                    for(int k = 0; k < num_gamma; k++) dev_processed[k].clear();
-                }
-                for(int k = 0; k < num_gamma; k++) {
-                    auto tensor = torch::empty({level_height, level_width}, torch::device(torch::kCUDA).dtype(torch::kFloat16));
-                    dev_processed[k].push_back(tensor);
-                }
-            }
-        }
         
         for(int l=1; l<num_levels; l++) {
             const int level_width = dl(bwidth, l);
             const int level_height = dl(bheight, l);
             
-            dim3 block = block_size_2d;
-            dim3 grid = grid2d(level_width, level_height);
-            
             // All levels now use fp16 -> fp16 processing
-            gauss_reduce_half<<<grid, block, 0, stream.stream()>>>(
+            gauss_reduce_half<<<grid2d(level_width, level_height), block_size_2d, 0, stream.stream()>>>(
                 padded_ptr(l-1), 
                 (l == num_levels-1) ? output_ptr(l) : padded_ptr(l), 
                 make_int2(level_width, level_height), make_int2(dl(bwidth, l-1), dl(bheight, l-1)));
@@ -533,11 +535,8 @@ struct LaplacianImpl : public Laplacian
         for(int k=0; k<num_gamma; k++) {
             const float g = (k + 0.5f) / (float)num_gamma;
             
-            dim3 block = block_size_2d;
-            dim3 grid = grid2d(bwidth, bheight);
-            
             // Process curve directly: fp16 input -> fp16 output
-            process_curve_half<<<grid, block, 0, stream.stream()>>>(
+            process_curve_half<<<grid2d(bwidth, bheight), block_size_2d, 0, stream.stream()>>>(
                 padded_ptr(0), processed_ptr(0, k), 
                 g, sigma, shadows, highlights, clarity,
                 make_int2(bwidth, bheight));
@@ -547,10 +546,7 @@ struct LaplacianImpl : public Laplacian
                 const int level_width = dl(bwidth, l);
                 const int level_height = dl(bheight, l);
                 
-                dim3 block = block_size_2d;
-                dim3 grid = grid2d(level_width, level_height);
-                
-                gauss_reduce_half<<<grid, block, 0, stream.stream()>>>(
+                gauss_reduce_half<<<grid2d(level_width, level_height), block_size_2d, 0, stream.stream()>>>(
                     processed_ptr(l-1, k), processed_ptr(l, k), 
                     make_int2(level_width, level_height), make_int2(dl(bwidth, l-1), dl(bheight, l-1)));
             }
@@ -565,9 +561,6 @@ struct LaplacianImpl : public Laplacian
             const int pw = dl(bwidth, l);
             const int ph = dl(bheight, l);
             
-            dim3 block = block_size_2d;
-            dim3 grid = grid2d(pw, ph);
-            
             // Fill pointer arrays on host
             std::vector<int64_t> h_ptrs0(num_gamma), h_ptrs1(num_gamma);
             for(int k = 0; k < num_gamma; k++) {
@@ -579,7 +572,7 @@ struct LaplacianImpl : public Laplacian
             CUDA_CHECK(cudaMemcpyToSymbol(d_gamma_level0, h_ptrs0.data(), num_gamma * sizeof(half_t*)));
             CUDA_CHECK(cudaMemcpyToSymbol(d_gamma_level1, h_ptrs1.data(), num_gamma * sizeof(half_t*)));
             
-            laplacian_assemble<num_gamma><<<grid, block, 0, stream.stream()>>>(
+            laplacian_assemble<num_gamma><<<grid2d(pw, ph), block_size_2d, 0, stream.stream()>>>(
                 padded_ptr(l), 
                 output_ptr(l+1),
                 output_ptr(l),
@@ -590,10 +583,8 @@ struct LaplacianImpl : public Laplacian
     void write_back_step(torch::Tensor& output)
     {
         auto stream = c10::cuda::getCurrentCUDAStream();
-        dim3 final_block = block_size_2d;
-        dim3 final_grid = grid2d(width, height);
-        
-        write_back_half<<<final_grid, final_block, 0, stream.stream()>>>(
+
+        write_back_half<<<grid2d(width, height), block_size_2d, 0, stream.stream()>>>(
             output_ptr(0), output.data_ptr<float>(),
             max_supp, make_int2(width, height), make_int2(bwidth, bheight));
     }

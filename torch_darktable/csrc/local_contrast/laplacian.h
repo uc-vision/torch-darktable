@@ -29,6 +29,7 @@ struct Laplacian {
 
 // Factory function for workspace creation (for reuse across multiple images)
 std::shared_ptr<Laplacian> create_laplacian(
-    torch::Device device, int num_gamma, 
-    int width, int height, 
+    torch::Device device, 
+    int width, int height,
+    int num_gamma, 
     float sigma, float shadows, float highlights, float clarity);
