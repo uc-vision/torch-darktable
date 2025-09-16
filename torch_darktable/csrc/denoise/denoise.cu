@@ -166,9 +166,9 @@ __device__ __forceinline__ void store_pixel(
 }
 
 
-__device__ __forceinline__ Complex apply_gain(Complex value, float noise_power) {
+__device__ __forceinline__ Complex apply_gain(Complex value, float sigma) {
   float power = value.magnitude_squared() + eps;
-  float gain = fmaxf(power - noise_power, 0.0f) / power;
+  float gain = fmaxf(power - sigma * sigma, 0.0f) / power;
   return gain * value;
 }
 
