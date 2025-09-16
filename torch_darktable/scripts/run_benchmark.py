@@ -71,17 +71,16 @@ def run_benchmark(image_path: Path, pattern: BayerPattern, warmup_iters: int = 5
     
     
     wiener32x2 = td.create_wiener(bayer_input.device, (width, height), overlap=2, tile_size=32)
-    wiener16x2 = td.create_wiener(bayer_input.device, (width, height), overlap=2, tile_size=16)
-
+    wiener32x4 = td.create_wiener(bayer_input.device, (width, height), overlap=4, tile_size=32)
     wiener16x2_gray = td.create_wiener(bayer_input.device, (width, height), overlap=2, tile_size=16, channels=1)
 
 
     print("=== Denoise Benchmarks ===")
 
-
     benchmark("Wiener 32x2", partial(wiener32x2.process, noise=0.05), rgb_tensor, warmup_iters=warmup_iters, bench_iters=bench_iters)
-    benchmark("Wiener 16x2", partial(wiener16x2.process, noise=0.05), rgb_tensor, warmup_iters=warmup_iters, bench_iters=bench_iters)
-    benchmark("Wiener 16x2 Gray", partial(wiener16x2_gray.process_luminance, noise=0.05), rgb_tensor, warmup_iters=warmup_iters, bench_iters=bench_iters)
+    benchmark("Wiener 32x4", partial(wiener32x4.process, noise=0.05), rgb_tensor, warmup_iters=warmup_iters, bench_iters=bench_iters)
+
+    benchmark("Wiener 32x2 Gray", partial(wiener16x2_gray.process_luminance, noise=0.05), rgb_tensor, warmup_iters=warmup_iters, bench_iters=bench_iters)
 
 
     benchmark("Estimate Noise", td.estimate_channel_noise, rgb_tensor, warmup_iters=warmup_iters, bench_iters=bench_iters)
