@@ -78,9 +78,9 @@ def run_benchmark(image_path: Path, pattern: BayerPattern, warmup_iters: int = 5
 
     print("=== Denoise Benchmarks ===")
 
-    benchmark("Wiener 32x2", partial(wiener32x2.process, noise=0.05), rgb_tensor, warmup_iters=warmup_iters, bench_iters=bench_iters)
-    benchmark("Wiener 32x4", partial(wiener32x4.process, noise=0.05), rgb_tensor, warmup_iters=warmup_iters, bench_iters=bench_iters)
-    benchmark("Wiener 32x2 Gray", partial(wiener32x2_gray.process_luminance, noise=0.05), rgb_tensor, warmup_iters=warmup_iters, bench_iters=bench_iters)
+    benchmark("Wiener 32x2", partial(wiener32x2.process, noise=0.05), rgb_tensor.to(torch.float16), warmup_iters=warmup_iters, bench_iters=bench_iters)
+    benchmark("Wiener 32x4", partial(wiener32x4.process, noise=0.05), rgb_tensor.to(torch.float16), warmup_iters=warmup_iters, bench_iters=bench_iters)
+    # benchmark("Wiener 32x2 Gray", partial(wiener32x2_gray.process_luminance, noise=0.05), rgb_tensor, warmup_iters=warmup_iters, bench_iters=bench_iters)
     benchmark("Estimate Noise", td.estimate_channel_noise, rgb_tensor, warmup_iters=warmup_iters, bench_iters=bench_iters)
 
     print()

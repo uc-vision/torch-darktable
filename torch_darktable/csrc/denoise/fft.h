@@ -10,15 +10,6 @@ namespace cg = cooperative_groups;
 #include <cutlass/numeric_types.h>
 #include <cutlass/complex.h>
 
-// CUTLASS complex for actual computations - half precision for storage
-using half_t = cutlass::half_t;
-using Complex = cutlass::complex<half_t>;
-
-template<typename T, int N>
-using Array = cutlass::Array<T, N>;
-template<int N>
-using Half = cutlass::Array<half_t, N>;
-
 
 
 // Twiddle factors in half precision

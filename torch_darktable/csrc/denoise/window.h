@@ -5,13 +5,6 @@
 #include <tuple>
 #include <cutlass/array.h>
 
-using half_t = cutlass::half_t;
-template<typename T, int N>
-using Array = cutlass::Array<T, N>;
-template<int N>
-using Half = cutlass::Array<half_t, N>;
-template<int N>
-using Float = cutlass::Array<float, N>;
 
 // 16x16 separable Gaussian windows - half precision for memory efficiency
 __constant__ half_t window_fft_16[16];
