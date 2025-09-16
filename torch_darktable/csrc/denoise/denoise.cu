@@ -1,91 +1,67 @@
-#include <cuda_runtime.h>
+
+#include <cooperative_groups.h>
+#include <cutlass/array.h>
+#include <cutlass/numeric_types.h>
+#include <cutlass/complex.h>
+#include <cutlass/functional.h>
+#include <cutlass/numeric_conversion.h>
+
+namespace cg = cooperative_groups;
 
 #include "reduction.h"
 #include "denoise.h"
+
 #include "fft.h"
 #include "window.h"
-#include "cuda_utils.h"
 
 
 namespace {
 
 constexpr float eps = 1e-15f;
 
-template<int C>
-struct pixel_type;
+// Simple utility function
+__host__ __device__ inline int div_up(int a, int b) {
+    return (a + b - 1) / b;
+}
 
-template<>
-struct pixel_type<1> {
-  using type = float;
-
-  __device__ __forceinline__ static void atomic_add(float* addr, float value) {
-      atomicAdd(addr, value);
-  }
-
-  __device__ __forceinline__ static float zero() {
-    return 0.0f;
-  }
-
-  __host__ static float from_tensor(const torch::Tensor& tensor) {
-    return tensor[0].item<float>();
-  }
-
-  __device__ __forceinline__ static float get(const float& pixel, int i) {
-      return pixel;
-  }
-
-  __device__ __forceinline__ static void set(float& pixel, int i, float value) {
-      pixel = value;
-  }
-};
-
-template<>
-struct pixel_type<3> {
-  using type = float3;
-
-  __device__ __forceinline__ static void atomic_add(float3* addr, float3 value) {
-      atomicAdd(&addr->x, value.x);
-      atomicAdd(&addr->y, value.y);
-      atomicAdd(&addr->z, value.z);
-  }
-
-  __device__ __forceinline__ static float3 zero() {
-    return make_float3(0.0f, 0.0f, 0.0f);
-  }
-
-  __host__ static float3 from_tensor(const torch::Tensor& tensor) {
-      return make_float3(tensor[0].item<float>(), tensor[1].item<float>(), tensor[2].item<float>());
-  }
-
-  __device__ __forceinline__ static float get(const float3& pixel, int i) {
-      return (&pixel.x)[i];
-  }
-
-  __device__ __forceinline__ static void set(float3& pixel, int i, float value) {
-      (&pixel.x)[i] = value;
-  }
-};
+// Clean type aliases - half precision for storage, float for accumulators
+// using half_t = __half;
+using half_t = at::Half;
+using Complex = cutlass::complex<half_t>;
+template<typename T, int N>
+using Array = cutlass::Array<T, N>;
+template<int N>
+using Half = cutlass::Array<half_t, N>;
+template<int N>
+using Float = cutlass::Array<float, N>;
 
 template<int C>
-using pixel_t = typename pixel_type<C>::type;
+using float_to_half = cutlass::NumericArrayConverter<float, half_t, C>;
 
 template<int C>
-__device__ __forceinline__ pixel_t<C> block_mean(pixel_t<C> value) {
+using half_to_float = cutlass::NumericArrayConverter<half_t, float, C>;
+
+// Generic block mean for any channel count - use float accumulators for numerical stability
+template<int C>
+__device__ __forceinline__ Half<C> block_mean(Half<C> value) {
     auto block = cg::this_thread_block();
-    __shared__ typename pixel_type<C>::type sum;
+    __shared__ Float<C> sum;
     
     if (block.thread_rank() == 0) {
-        sum = pixel_type<C>::zero();
+        sum.clear();
     }
-    
+
     auto group = cg::coalesced_threads();
-    pixel_t<C> result = cg::reduce(group, value, cg::plus<pixel_t<C>>{});
+    Float<C> result = cg::reduce(group, float_to_half<C>::convert(value), cg::plus<Float<C>>{});
     if (group.thread_rank() == 0) {
-        pixel_type<C>::atomic_add(&sum, result);
+        for(int i = 0; i < C; i++) {
+            atomicAdd(&sum[i], result[i]);
+        }
     }
     block.sync();
     
-    return sum / block.size();
+    // Convert back to half precision using array operators
+    return half_to_float<C>::convert(sum * (1.0f / block.size()));
 }
 
 
@@ -119,14 +95,12 @@ __device__ __forceinline__ int get_tile_idx() {
 }
 
 template<int K, int C>
-__device__ __forceinline__ pixel_t<C> load_pixel(
-    const pixel_t<C>* __restrict__ img,
+__device__ __forceinline__ Half<C> load_pixel(
+    const Half<C>* __restrict__ img,
     int stride, int H, int W
 ) {
     int2 g = get_group_pos();
     int2 t = get_thread_pos();
-    int tile_idx = get_tile_idx<K>();
-
        
     // Load one pixel with reflect padding
     // Shift grid to start earlier for proper boundary coverage
@@ -136,19 +110,22 @@ __device__ __forceinline__ pixel_t<C> load_pixel(
     return img[(refl_pos.y * W + refl_pos.x)];  // HWC layout
 }
 
+
+
+// Generic store operation for any channel count  
 template<int K, int C>
 __device__ __forceinline__ void store_pixel(
-    pixel_t<C>* __restrict__ out,
-    float* __restrict__ mask,
-
+    Half<C>* __restrict__ out,
+    half_t* __restrict__ mask,
     int stride, int H_pad, int W_pad, 
-    pixel_t<C> const& value,
-    pixel_t<C> const& mean,
-    float fft_window
+    Half<C> const& value,
+    Half<C> const& mean,
+    half_t fft_window
 ) {
+
+
     int2 g = get_group_pos();
     int2 t = get_thread_pos();
-    int tile_idx = get_tile_idx<K>();
     
     auto interp_window = Window<K>::interp_window(t);
     
@@ -158,58 +135,62 @@ __device__ __forceinline__ void store_pixel(
     if (out_pos.y < H_pad && out_pos.x < W_pad) {
         int out_idx = out_pos.y * W_pad + out_pos.x;
 
-        pixel_t<C> reconstructed = (value + mean * fft_window) * interp_window;
+        Half<C> reconstructed = (value + mean * fft_window) * interp_window;
 
-        pixel_type<C>::atomic_add(&out[out_idx], reconstructed);
+        for(int i = 0; i < C; i++) {
+            atomicAdd(&out[out_idx][i], reconstructed[i]);
+        }
+
         atomicAdd(&mask[out_idx], fft_window * interp_window);
     }
 }
 
 
-__device__ __forceinline__ Complex apply_gain(Complex value, float sigma) {
-  float power = value.magnitude_squared() + eps;
-  float gain = fmaxf(power - sigma * sigma, 0.0f) / power;
-  return gain * value;
+__device__ __forceinline__ Complex apply_gain(Complex value, half_t sigma) {
+  auto power = cutlass::norm(value) + eps;
+  auto gain = fmaxf(power - sigma * sigma, 0.0f) / power;
+  
+  return value * gain;
 }
 
 // Main kernel: orchestrates the Wiener filtering pipeline
 template<int K, int C>
 __global__ void wiener_tile_kernel(
-    const pixel_t<C>* __restrict__ img,    // (C, H, W)
-    pixel_t<C>* __restrict__ out,          // (C, H_pad, W_pad)  
-    float* __restrict__ mask,         // (H_pad, W_pad)
+    const Half<C>* __restrict__ img,    // (C, H, W)
+    Half<C>* __restrict__ out,          // (C, H_pad, W_pad) - half precision  
+    half_t* __restrict__ mask,         // (H_pad, W_pad)
     int H, int W, int H_pad, int W_pad,
     int stride, int grid_h, int grid_w,
-    const pixel_t<C> noise_sigmas  // (C,)
+    const Half<C> noise_sigmas  // (C,)
 ) {
 
     int2 t = get_thread_pos();
 
     // 1. Load tile and compute mean
-    pixel_t<C> value = load_pixel<K, C>(img, stride, H, W);
-    pixel_t<C> mean = block_mean<C>(value);
+    Half<C> value = load_pixel<K, C>(img, stride, H, W);
+    Half<C> mean = block_mean<C>(value);
   
-    float fft_window = Window<K>::fft_window(t);
-    value = (value - mean) * fft_window;
+    half_t fft_window = Window<K>::fft_window(t);
+    Half<C> windowed_value = (value - mean) * fft_window;
 
     #pragma unroll
     for (int i = 0; i < C; i++) {
-      auto complex = FFT<K>::fft_2d(Complex(pixel_type<C>::get(value, i), 0.0f));
-      complex = apply_gain(complex, pixel_type<C>::get(noise_sigmas, i));
-      pixel_type<C>::set(value, i, FFT<K>::ifft_2d(complex).re);
+      auto complex = FFT<K>::fft_2d(Complex(windowed_value[i], 0.0_hf));
+      complex = apply_gain(complex, noise_sigmas[i]);
+      windowed_value[i] = FFT<K>::ifft_2d(complex).real();
     }
     
     // 6. Store tile back to output (add mean back)
-      store_pixel<K, C>(out, mask, stride, H_pad, W_pad, value, mean, fft_window);
+    store_pixel<K, C>(out, mask, stride, H_pad, W_pad, windowed_value, mean, fft_window);
 
 }
 
 
 template<int K, int C>
 __global__ void normalize_and_crop_kernel(
-    pixel_t<C> const * __restrict__ padded_out,  // (C, H_pad, W_pad)
-    pixel_t<C>* __restrict__ final_out,         // (C, H, W) - final output
-    float const* __restrict__ mask,        // (H_pad, W_pad)
+    Half<C> const * __restrict__ padded_out,  // (C, H_pad, W_pad) - half precision
+    Half<C>* __restrict__ final_out,         // (C, H, W) - final output in half
+    half_t const* __restrict__ mask,        // (H_pad, W_pad)
 
     int H, int W, int H_pad, int W_pad
 ) {
@@ -221,17 +202,31 @@ __global__ void normalize_and_crop_kernel(
         int padded_idx = pad_pos.y * W_pad + pad_pos.x;
         int idx = (pos.y * W + pos.x);  // HWC layout
 
-        final_out[idx] = padded_out[padded_idx] / (mask[padded_idx] + eps);
+        // Normalize half precision values using float arithmetic
+        Half<C> pixel = padded_out[padded_idx];
+        auto divisor = 1.0f / (mask[padded_idx] + eps);
+        Half<C> result = pixel * divisor;
+        final_out[idx] = result;
     }
 }
 
+
+// Helper functions for tensor conversion
+template<int C>
+__host__ Half<C> tensor_to_array(const torch::Tensor& tensor) {
+    Half<C> result;
+    for (int i = 0; i < C; i++) {
+        result[i] = tensor[i].item<at::Half>();
+    }
+    return result;
+}
 
 template<int K, int C = 3>
 struct WienerImpl final : public Wiener {
     static_assert(K == 16 || K == 32, "K must be 16 or 32");
     static_assert(C == 1 || C == 3, "C must be 1 or 3");
     
-    typedef typename pixel_type<C>::type pixel;
+    using Pixel = Half<C>;
 
     torch::Device device_;
     int overlap_factor_;
@@ -249,6 +244,7 @@ public:
     torch::Tensor process(const torch::Tensor &input, const torch::Tensor &noise_sigmas) override {
         TORCH_CHECK(input.device() == device_, "input device mismatch");
         TORCH_CHECK(input.dim() == 3, "expected HWC tensor");
+        TORCH_CHECK(input.dtype() == torch::kHalf, "input must be half precision (float16)");
 
         const int H = static_cast<int>(input.size(0));
         const int W = static_cast<int>(input.size(1));
@@ -265,6 +261,7 @@ public:
         const int grid_h = (H + K + stride - 1) / stride - grid_start;  // Extended coverage
         const int grid_w = (W + K + stride - 1) / stride - grid_start;
         
+        // All tensors in half precision for memory efficiency
         auto padded_out = torch::zeros({h_pad, w_pad, C}, input.options());
         auto mask = torch::zeros({h_pad, w_pad}, input.options());
         auto final_out = torch::empty({H, W, C}, input.options());
@@ -275,12 +272,12 @@ public:
         dim3 grid(grid_w, grid_h);
         dim3 block(K, K);  // KxK threads, each handles one pixel
 
-        pixel const noise_sigmas_val = pixel_type<C>::from_tensor(noise_sigmas);
+        Pixel noise_sigmas_val = tensor_to_array<C>(noise_sigmas);
        
         wiener_tile_kernel<K, C><<<grid, block>>>(
-            reinterpret_cast<pixel const*>(input.data_ptr<float>()),
-            reinterpret_cast<pixel*>(padded_out.data_ptr<float>()),
-            mask.data_ptr<float>(),
+            reinterpret_cast<Pixel const*>(input.data_ptr<torch::Half>()),
+            reinterpret_cast<Pixel*>(padded_out.data_ptr<torch::Half>()),
+            mask.data_ptr<torch::Half>(),
             H, W, h_pad, w_pad,
             stride, grid_h, grid_w,
             noise_sigmas_val
@@ -296,9 +293,9 @@ public:
         dim3 norm_block(K, K);
         
         normalize_and_crop_kernel<K, C><<<norm_grid, norm_block>>>(
-            reinterpret_cast<pixel const*>(padded_out.data_ptr<float>()),
-            reinterpret_cast<pixel*>(final_out.data_ptr<float>()),
-            mask.data_ptr<float>(),
+            reinterpret_cast<Half<C> const*>(padded_out.data_ptr<torch::Half>()),
+            reinterpret_cast<Half<C>*>(final_out.data_ptr<torch::Half>()),
+            mask.data_ptr<torch::Half>(),
             H, W, h_pad, w_pad
         );
         
