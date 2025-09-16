@@ -5,15 +5,20 @@ import torch
 from beartype import beartype
 import torch_darktable as td
 import cv2
-import argparse
 
 @beartype
 @dataclass
 class CameraSettings:
-    width: int
-    ids_format: bool
-    white_balance: tuple[float, float, float]
-    brightness: float
+    image_size: tuple[int, int]
+    ids_format: bool = False
+    white_balance: tuple[float, float, float] = (1.0, 1.0, 1.0)
+    brightness: float = 1.0
+    padding: int = 0
+
+    @property
+    def bytes(self) -> int:
+        return (self.image_size[0] * self.image_size[1] * 3 // 2) + self.padding
+
 
 @beartype
 def load_raw_bytes(filepath:Path, device:torch.device=torch.device('cuda')):
@@ -33,10 +38,33 @@ def load_raw_image(filepath:Path, camera_settings:CameraSettings, device:torch.d
 
 
 camera_settings = dict(
-    blackfly=CameraSettings(width=4096, ids_format=False, white_balance=(1.0, 1.0, 1.0), brightness=0.8),
-    ids=CameraSettings(width=2472, ids_format=True, white_balance=(1.5, 1.0, 1.5), brightness=1.0)
+    blackfly=CameraSettings(
+      width=(4096, 3000), 
+      ids_format=False, 
+      white_balance=(1.0, 1.0, 1.0), 
+      brightness=0.8,
+    ),
+    ids=CameraSettings(
+      width=(2472, 2048), 
+      ids_format=True, 
+      white_balance=(1.5, 1.0, 1.5), 
+      brightness=1.0,
+    ),
+    pf_cameras=CameraSettings(
+      width=(4112, 3008), 
+      white_balance=(1.0, 1.0, 1.0), 
+      brightness=1.0,
+      padding=1536
+    )
 )
 
+
+def matches_size(file_path:Path):
+  global camera_settings
+  for camera_name, camera_settings in camera_settings.items():
+    if camera_settings.bytes == file_path.stat().st_size:
+      return camera_name
+  return None
 
 
 
