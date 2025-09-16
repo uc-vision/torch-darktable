@@ -5,7 +5,7 @@
 #include "packed.h"
 #include "tonemap/tonemap.h"
 #include "white_balance.h"
-#include "denoise.h"
+#include "denoise/denoise.h"
 
 #include <ATen/ATen.h>
 #include <pybind11/pybind11.h>
@@ -39,7 +39,7 @@ std::shared_ptr<Bilateral> create_bilateral(torch::Device device,
   int width, int height, float sigma_s, float sigma_r);
 
 std::shared_ptr<Wiener> create_wiener(torch::Device device, int width, int height,
-  float eps, int overlap_factor);
+  int overlap_factor, int tile_size, int channels);
 
 
 #pragma GCC diagnostic push
@@ -181,10 +181,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     py::class_<Wiener, std::shared_ptr<Wiener>>(m, "Wiener")
         .def(py::init(&create_wiener), "Create Wiener denoiser",
              py::arg("device"), py::arg("width"), py::arg("height"),
-             py::arg("eps") = 1e-15f, py::arg("overlap_factor") = 4)
+             py::arg("overlap_factor") = 4, py::arg("tile_size") = 32, py::arg("channels") = 3)
         .def("process", &Wiener::process, "Process image with Wiener filter",
              py::arg("input"), py::arg("noise_sigmas"))
-        .def_property("eps", &Wiener::get_eps, &Wiener::set_eps, "Regularization epsilon");
+        .def_property_readonly("overlap_factor", &Wiener::get_overlap_factor, "Overlap factor (read-only)");
 
 
 }

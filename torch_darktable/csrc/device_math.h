@@ -100,6 +100,7 @@ struct float3x3 {
     }
     
     __device__ __forceinline__ float3x3(const float* data) {
+        #pragma unroll
         for (int i = 0; i < 9; i++) {
             m[i] = data[i];
         }

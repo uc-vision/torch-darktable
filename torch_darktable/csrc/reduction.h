@@ -78,6 +78,9 @@ __device__ __forceinline__ void reduce_max(float3 value, float3* target) {
 }
 
 
+
+
+
 // Compare and swap inline function for sorting network
 __device__ __forceinline__ void cas(float& a, float& b) {
   float x = a;
@@ -140,17 +143,6 @@ __device__ __forceinline__ float diff_median3x3(const float3* buf, int w) {
   );
 }
 
-// Block-level reduction for computing means within a single block
-__device__ __forceinline__ float block_reduce_mean(float value, int count) {
-    __shared__ float result;
-    auto group = cg::coalesced_threads();
-    float sum = cg::reduce(group, value, cg::plus<float>());
-    if (group.thread_rank() == 0) {
-        result = sum / count;
-    }
-    __syncthreads();
-    return result;
-}
 
 
 // Exact median computation within a warp using bitonic sort
@@ -160,7 +152,9 @@ __device__ __forceinline__ float warp_median(float my_val) {
     int tid = warp.thread_rank();
     
     // Bitonic sort: 5 stages for 32 elements
+    #pragma unroll
     for (int stage = 0; stage < 5; stage++) {
+        #pragma unroll
         for (int step = stage; step >= 0; step--) {
             int partner = tid ^ (1 << step);
             float partner_val = warp.shfl(my_val, partner);

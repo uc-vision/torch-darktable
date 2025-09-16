@@ -4,15 +4,18 @@ from PIL import Image
 import numpy as np
 
 from torch_darktable import create_ppg, create_rcd, create_postprocess, BayerPattern
-from torch_darktable.debayer import create_bilinear, patterns
+from torch_darktable.debayer import create_bilinear
 from torch_darktable.utilities import load_image, rgb_to_bayer
 
 
 
 def create_postprocess_algorithm(device, width, height, pattern, args):
     """Create post-processing algorithm from args object."""
-    return create_postprocess(device, (width, height), pattern, args.color_smoothing_passes,
-                              args.green_eq_local, args.green_eq_global, args.green_eq_threshold)
+    return create_postprocess(device, (width, height), pattern, 
+        color_smoothing_passes=args.color_smoothing_passes,
+        green_eq_local=args.green_eq_local, 
+        green_eq_global=args.green_eq_global, 
+        green_eq_threshold=args.green_eq_threshold)
 
 
 def test_demosaic(image_path: Path, pattern: BayerPattern, args):
@@ -58,8 +61,7 @@ def main():
     parser = argparse.ArgumentParser(description='Test demosaic algorithms on an image')
     parser.add_argument('image', type=Path, help='Input image path')
     parser.add_argument('--pattern', type=str, default=BayerPattern.RGGB.name, choices=
-      list(patterns.keys()),
-                       help='Bayer pattern')
+      list(BayerPattern), help='Bayer pattern')
 
 
     parser.add_argument('--bilinear', action='store_true', help='Use bilinear demosaic')
@@ -81,11 +83,10 @@ def main():
                        help='Enable global green equilibration')
     parser.add_argument('--green_eq_threshold', type=float, default=0.01,
                        help='Green equilibration threshold')
-    
     args = parser.parse_args()
     
     try:
-        test_demosaic(args.image, patterns[args.pattern], args)
+        test_demosaic(args.image, BayerPattern[args.pattern], args)
     except Exception as e:
         print(f"Error: {e}")
         return 1

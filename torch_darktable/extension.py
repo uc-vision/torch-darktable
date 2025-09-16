@@ -1,9 +1,8 @@
 """CUDA extension loading and basic types."""
-
+import os
 from typing import TYPE_CHECKING
 from pathlib import Path
 from torch.utils import cpp_extension
-
 
 def _load_cuda_extension(debug: bool = False, verbose: bool = False):
     source_dir = Path(__file__).parent / "csrc"
@@ -20,13 +19,15 @@ def _load_cuda_extension(debug: bool = False, verbose: bool = False):
         "tonemap/aces.cu",
         "tonemap/reinhard.cu",
         "white_balance.cu",
-        "denoise.cu",
+        "denoise/denoise.cu",
     ]
     sources = [str(source_dir / f) for f in source_files]
 
+    extension_name = "torch_darktable_extension_debug" if debug else "torch_darktable_extension"
     return cpp_extension.load(
-        name="torch_darktable_extension",
+        name=extension_name,
         sources=sources,
+        extra_include_paths=[str(source_dir)],
         extra_cflags=["-O3", "-std=c++17"] if not debug else ["-O0", "-g3", "-ggdb3"],
         verbose=verbose,
         with_cuda=True,
@@ -34,15 +35,19 @@ def _load_cuda_extension(debug: bool = False, verbose: bool = False):
     )
 
 
+
 # Load extension on import, with static types for type checkers
 if TYPE_CHECKING:
     from . import torch_darktable_extension as extension  # type: ignore
 else:
-    extension = _load_cuda_extension(verbose=True)
+    debug_mode = os.getenv('TORCH_DARKTABLE_DEBUG', "0") == "1"
+    print(f"Debug mode: {'enabled' if debug_mode else 'disabled'}")
+    extension = _load_cuda_extension(debug=debug_mode, verbose=True)
 
 
 # readable representations for algorithm classes
 def _install_algorithm_repr() -> None:
+
     def _ppg_repr(self) -> str:
         return f"PPG(median_threshold={self.median_threshold})"
 

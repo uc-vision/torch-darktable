@@ -5,13 +5,14 @@ import torch
 from beartype import beartype
 import torch_darktable as td
 import cv2
+import argparse
 
 @beartype
 @dataclass
 class CameraSettings:
     width: int
     ids_format: bool
-    color_scales: tuple[float, float, float]
+    white_balance: tuple[float, float, float]
     brightness: float
 
 @beartype

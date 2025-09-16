@@ -20,7 +20,7 @@ class Packed12Format(Enum):
     IDS = 1
 
 class Bilinear5x5:
-  def __init__(self, bayer_pattern: extension.BayerPattern):
+  def __init__(self, bayer_pattern: BayerPattern):
     self.bayer_pattern = bayer_pattern
 
   def process(self, image: torch.Tensor) -> torch.Tensor:
