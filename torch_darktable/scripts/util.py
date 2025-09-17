@@ -36,7 +36,7 @@ def load_raw_image(filepath:Path, camera_settings:CameraSettings | None = None, 
   raw_cuda = load_raw_bytes(filepath, device).to(device, non_blocking=True)
 
   if camera_settings.padding > 0:
-    raw_cuda = raw_cuda[camera_settings.padding:]
+    raw_cuda = raw_cuda[:-camera_settings.padding]
 
   fmt = td.Packed12Format.IDS if camera_settings.ids_format else td.Packed12Format.STANDARD
   decoded = td.decode12(raw_cuda, output_dtype=torch.float32, format_type=fmt)
