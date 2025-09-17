@@ -38,6 +38,40 @@ def modify_luminance(
 
 
 @beartype
+def compute_log_luminance(rgb_image: torch.Tensor, eps: float) -> torch.Tensor:
+    """
+    Compute log luminance from RGB image with clamping to avoid NaN.
+    
+    Args:
+        rgb_image: Input RGB image tensor
+        eps: Small value to clamp lower side to avoid NaN
+        
+    Returns:
+        Log luminance tensor
+    """
+    return extension.compute_log_luminance(rgb_image, eps)
+
+
+@beartype
+def modify_log_luminance(
+    rgb_image: torch.Tensor,
+    log_luminance: torch.Tensor,
+    eps: float  
+) -> torch.Tensor:
+    """
+    Update RGB image with modified log luminance.
+    
+    Args:
+        rgb_image: Input RGB image tensor
+        log_luminance: Modified log luminance tensor
+        
+    Returns:
+        RGB image tensor with updated log luminance
+    """
+    return extension.modify_log_luminance(rgb_image, log_luminance, eps)
+
+
+@beartype
 def rgb_to_lab(rgb_image: torch.Tensor) -> torch.Tensor:
     """
     Convert RGB to CIELAB color space.
@@ -137,7 +171,7 @@ def color_transform_3x3(image: torch.Tensor, matrix_3x3: torch.Tensor) -> torch.
 
 
 __all__ = [
-    "compute_luminance", "modify_luminance",
+    "compute_luminance", "modify_luminance", "compute_log_luminance", "modify_log_luminance",
     "rgb_to_lab", "lab_to_rgb",
     "rgb_to_xyz", "xyz_to_lab", "lab_to_xyz", "xyz_to_rgb",
     "color_transform_3x3"

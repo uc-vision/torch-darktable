@@ -117,6 +117,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
           py::arg("rgb"));
     m.def("modify_luminance", &modify_luminance, "Modify luminance of RGB image",
           py::arg("rgb"), py::arg("new_luminance"));
+    m.def("compute_log_luminance", &compute_log_luminance, "Compute log luminance from RGB image with epsilon clamping",
+          py::arg("rgb"), py::arg("eps"));
+    m.def("modify_log_luminance", &modify_log_luminance, "Update RGB image with modified log luminance",
+          py::arg("rgb"), py::arg("log_luminance"), py::arg("eps"));
 
     m.def("rgb_to_xyz", &rgb_to_xyz, "Convert RGB to XYZ color space",
           py::arg("rgb"));

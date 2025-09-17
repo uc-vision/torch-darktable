@@ -9,6 +9,7 @@ import cv2
 @beartype
 @dataclass
 class CameraSettings:
+    name: str
     image_size: tuple[int, int]
     ids_format: bool = False
     white_balance: tuple[float, float, float] = (1.0, 1.0, 1.0)
@@ -27,31 +28,41 @@ def load_raw_bytes(filepath:Path, device:torch.device=torch.device('cuda')):
     raw_bytes = f.read()
   return torch.frombuffer(raw_bytes, dtype=torch.uint8).to(device, non_blocking=True)
 
-def load_raw_image(filepath:Path, camera_settings:CameraSettings, device:torch.device=torch.device('cuda')) -> torch.Tensor:
+def load_raw_image(filepath:Path, camera_settings:CameraSettings | None = None, device:torch.device=torch.device('cuda')) -> torch.Tensor:
+  if camera_settings is None:
+    camera_settings = settings_for_file(filepath)
+
+  width, height = camera_settings.image_size
   raw_cuda = load_raw_bytes(filepath, device).to(device, non_blocking=True)
+
+  if camera_settings.padding > 0:
+    raw_cuda = raw_cuda[camera_settings.padding:]
+
   fmt = td.Packed12Format.IDS if camera_settings.ids_format else td.Packed12Format.STANDARD
   decoded = td.decode12(raw_cuda, output_dtype=torch.float32, format_type=fmt)
 
-  bayer = decoded.view(-1, camera_settings.width)
+  bayer = decoded.view(-1, width)
   return scale_bayer(bayer, camera_settings.white_balance) * camera_settings.brightness
-
 
 
 camera_settings = dict(
     blackfly=CameraSettings(
-      width=(4096, 3000), 
+      name='blackfly',
+      image_size=(4096, 3000), 
       ids_format=False, 
       white_balance=(1.0, 1.0, 1.0), 
       brightness=0.8,
     ),
     ids=CameraSettings(
-      width=(2472, 2048), 
+      name='ids',
+      image_size=(2472, 2048), 
       ids_format=True, 
       white_balance=(1.5, 1.0, 1.5), 
       brightness=1.0,
     ),
-    pf_cameras=CameraSettings(
-      width=(4112, 3008), 
+    pfr=CameraSettings(
+      name='pfr',
+      image_size=(4112, 3008), 
       white_balance=(1.0, 1.0, 1.0), 
       brightness=1.0,
       padding=1536
@@ -59,12 +70,15 @@ camera_settings = dict(
 )
 
 
-def matches_size(file_path:Path):
+def settings_for_file(file_path:Path) -> CameraSettings:
   global camera_settings
-  for camera_name, camera_settings in camera_settings.items():
-    if camera_settings.bytes == file_path.stat().st_size:
-      return camera_name
-  return None
+
+  camera_sizes = {camera_settings.name: camera_settings.bytes for camera_settings in camera_settings.values()} 
+  for name, size in camera_sizes.items():
+    if size == file_path.stat().st_size:
+      return camera_settings[name]
+
+  raise ValueError(f"Could not match size of {file_path} with known camera settings {camera_sizes}")
 
 
 

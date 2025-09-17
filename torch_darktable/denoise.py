@@ -50,6 +50,13 @@ class Wiener:
       modified = self.process(luminance.unsqueeze(2), noise).squeeze(2)
       return extension.modify_luminance(image, modified)
 
+    def process_log_luminance(self, image: torch.Tensor, noise: float | torch.Tensor) -> torch.Tensor:
+      assert self._channels == 1, "Wiener can only process luminance for 1 channel"
+
+      luminance = extension.compute_luminance(image)
+      modified = self.process(luminance.unsqueeze(2), noise).squeeze(2)
+      return extension.modify_luminance(image, modified)
+
 
     @property
     def overlap_factor(self) -> int:

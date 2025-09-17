@@ -89,7 +89,7 @@ __device__ __forceinline__ float mix(float a, float b, float t) {
 struct float3x3 {
     float m[9];
     
-    __device__ __forceinline__ float3x3(
+    __host__ __device__ __forceinline__ float3x3(
         float m00, float m01, float m02,
         float m10, float m11, float m12, 
         float m20, float m21, float m22
@@ -99,7 +99,7 @@ struct float3x3 {
         m[6] = m20; m[7] = m21; m[8] = m22;
     }
     
-    __device__ __forceinline__ float3x3(const float* data) {
+    __host__ __device__ __forceinline__ float3x3(const float* data) {
         #pragma unroll
         for (int i = 0; i < 9; i++) {
             m[i] = data[i];

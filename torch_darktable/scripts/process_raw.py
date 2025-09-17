@@ -10,8 +10,8 @@ import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider, RadioButtons, CheckButtons, Button
 from PIL import Image
 
-from image_isp.load import add_camera_settings, load_raw_image, settings_from_args, stack_bayer
 import torch_darktable as td
+from .util import CameraSettings, load_raw_image, camera_settings
 
 
 def set_seed(seed):
@@ -25,7 +25,7 @@ def parse_args():
     parser.add_argument('input', type=Path, help='Path to input raw image')
     parser.add_argument('--seed', '-s', type=int, default=0, help='Random seed')
 
-    add_camera_settings(parser)
+    parser.add_argument('--camera', type=str, default=None, help='Camera name (one of ' + ', '.join(camera_settings.keys()) + ')')
 
     return parser.parse_args()
 
@@ -304,9 +304,8 @@ def main():
     args = parse_args()
     set_seed(args.seed)
     assert os.path.exists(args.input), f"Error: Input file {args.input} does not exist"
-    camera_settings = settings_from_args(args)
 
-    bayer_image = load_raw_image(args.input, camera_settings) * camera_settings.brightness
+    bayer_image = load_raw_image(args.input, args.camera) 
     interactive_debayer(bayer_image, args.input)
 
 

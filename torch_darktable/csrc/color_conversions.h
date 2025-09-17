@@ -5,6 +5,8 @@
 // PyTorch tensor interface functions
 torch::Tensor compute_luminance(const torch::Tensor& rgb);
 torch::Tensor modify_luminance(const torch::Tensor& rgb, const torch::Tensor& new_luminance);
+torch::Tensor compute_log_luminance(const torch::Tensor& rgb, float eps);
+torch::Tensor modify_log_luminance(const torch::Tensor& rgb, const torch::Tensor& log_luminance, float eps);
 
 // Individual conversion functions
 torch::Tensor rgb_to_xyz(const torch::Tensor& rgb);
