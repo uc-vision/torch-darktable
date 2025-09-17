@@ -3,7 +3,7 @@ import torch
 import os
 import numpy as np
 import argparse
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 import matplotlib.pyplot as plt
@@ -11,7 +11,10 @@ from matplotlib.widgets import Slider, RadioButtons, CheckButtons, Button
 from PIL import Image
 
 import torch_darktable as td
-from .util import CameraSettings, load_raw_image, camera_settings
+from torch_darktable.tonemap import TonemapParameters
+from .util import load_raw_image, camera_settings
+
+from beartype import beartype
 
 
 def set_seed(seed):
@@ -29,7 +32,7 @@ def parse_args():
 
     return parser.parse_args()
 
-
+@beartype
 @dataclass
 class Settings:
     debayer: Literal['bilinear', 'rcd', 'ppg'] = 'rcd'
@@ -39,13 +42,19 @@ class Settings:
     use_wiener: bool = False
     
     bilateral_detail: float = 0.2
-    bilateral_sigma_s: float = 2.0
+    bilateral_sigma_s: float = 4.0
     bilateral_sigma_r: float = 0.2
-    ppg_median_threshold: float = 0.25
-    tonemap_gamma: float = 0.75
-    tonemap_intensity: float = 2.0
-    tonemap_light_adapt: float = 0.9
-    wiener_sigma: float = 0.005
+    ppg_median_threshold: float = 0.0
+    postprocess_green_eq_threshold: float = 0.04
+
+    tonemap: TonemapParameters = field(default_factory=lambda: TonemapParameters(
+        gamma=0.75,
+        light_adapt=0.9,
+        intensity=1.0
+    ))
+
+    wiener_sigma: float = 0.1
+    saturation: float = 0.0
 
 
 def interactive_debayer(bayer_image: torch.Tensor, input_path: Path) -> None:
@@ -65,7 +74,7 @@ def interactive_debayer(bayer_image: torch.Tensor, input_path: Path) -> None:
 
     rcd_workspace = td.create_rcd(device, image_size, td.BayerPattern.RGGB, input_scale=1.0, output_scale=1.0)
     ppg_workspace = td.create_ppg(device, image_size, td.BayerPattern.RGGB, median_threshold=0.25)
-    postprocess_workspace = td.create_postprocess(device, image_size, td.BayerPattern.RGGB, color_smoothing_passes=5, green_eq_local=True, green_eq_global=True, green_eq_threshold=0.001)
+    postprocess_workspace = td.create_postprocess(device, image_size, td.BayerPattern.RGGB, color_smoothing_passes=5, green_eq_local=True, green_eq_global=True, green_eq_threshold=settings.postprocess_green_eq_threshold)
     wiener_workspace = td.create_wiener(device, image_size)
 
     def compute_rgb() -> np.ndarray:
@@ -83,7 +92,8 @@ def interactive_debayer(bayer_image: torch.Tensor, input_path: Path) -> None:
             rgb_raw = postprocess_workspace.process(rgb_raw)
 
         if settings.use_wiener:
-            rgb_raw = wiener_workspace.process((rgb_raw + 1e-4).log(), settings.wiener_sigma).exp()
+            rgb_raw = wiener_workspace.process_log(rgb_raw, settings.wiener_sigma)
+            
 
         if settings.use_bilateral:
             rgb_raw = td.bilateral_rgb(
@@ -92,24 +102,23 @@ def interactive_debayer(bayer_image: torch.Tensor, input_path: Path) -> None:
                 detail=settings.bilateral_detail,
             )
 
+        # Apply saturation adjustment before tonemapping (if needed)  
+        if settings.saturation != 0.0:
+            rgb_raw = td.modify_saturation_mult_add(rgb_raw, 1.0, settings.saturation)
+
+        # Compute metrics once
+        metrics = td.Reinhard.compute_metrics(rgb_raw, stride=4, min_gray=1e-2)
+        params = settings.tonemap
+
         if settings.tonemap_method == 'reinhard':
-            # Compute metrics and apply Reinhard tone mapping
-            metrics = td.Reinhard.compute_metrics(rgb_raw, stride=4, min_gray=1e-2)
             rgb_tm = td.Reinhard.tonemap(
-                rgb_raw,
-                metrics,
-                gamma=settings.tonemap_gamma,
-                intensity=settings.tonemap_intensity,
-                light_adapt=settings.tonemap_light_adapt,
-            )
+                rgb_raw, metrics, params)
         elif settings.tonemap_method == 'linear':
-            max_val = rgb_raw.max()
-            rgb_tm = (rgb_raw / (max_val + 1e-8)) * (2 ** (settings.tonemap_intensity))
-            rgb_tm = rgb_tm ** (1.0 / settings.tonemap_gamma)
-            rgb_tm = (rgb_tm.clamp(0.0, 1.0) * 255.0).to(torch.uint8)
+            rgb_tm = td.linear_tonemap(
+                rgb_raw, metrics, params)
         elif settings.tonemap_method == 'aces':
-            exposure_adjusted = rgb_raw.clamp(0.0, 1.0) * (2 ** (settings.tonemap_intensity + 2))
-            rgb_tm = td.aces_tonemap(exposure_adjusted, gamma=settings.tonemap_gamma)
+            rgb_tm = td.aces_tonemap(rgb_raw, metrics, params)
+
         else:
           assert False, f"Invalid tonemap method: {settings.tonemap_method}"
 
@@ -145,8 +154,8 @@ def interactive_debayer(bayer_image: torch.Tensor, input_path: Path) -> None:
 
     # Right column: create axes first, then sliders
     def create_axes_vertical(n:int, x:float=0.30, w:float=0.65, h:float=0.03,
-                             y_top:float=0.265, y_bottom:float=0.055) -> list[plt.Axes]:
-        axes: list[plt.Axes] = []
+                             y_top:float=0.265, y_bottom:float=0.055):
+        axes = []
         if n <= 0:
             return axes
         for i in range(n):
@@ -155,12 +164,11 @@ def interactive_debayer(bayer_image: torch.Tensor, input_path: Path) -> None:
             axes.append(plt.axes((x, y, w, h)))
         return axes
 
-    ax_gamma, ax_intensity, ax_light, ax_detail, ax_sigma, ax_sigma_r, ax_wiener_sigma, ax_ppg_med = create_axes_vertical(8)
+    ax_gamma, ax_light, ax_detail, ax_sigma, ax_sigma_r, ax_wiener_sigma, ax_ppg_med, ax_postprocess_thresh, ax_intensity, ax_saturation = create_axes_vertical(10)
 
     # Tonemap group
-    s_gamma = Slider(ax_gamma, 'gamma', 0.1, 3.0, valinit=settings.tonemap_gamma)
-    s_intensity = Slider(ax_intensity, 'intensity', 0.1, 10.0, valinit=settings.tonemap_intensity)
-    s_light = Slider(ax_light, 'light_adapt', 0.0, 1.0, valinit=settings.tonemap_light_adapt)
+    s_gamma = Slider(ax_gamma, 'gamma', 0.1, 3.0, valinit=settings.tonemap.gamma)
+    s_light = Slider(ax_light, 'light_adapt', 0.0, 1.0, valinit=settings.tonemap.light_adapt)
     
     # Bilateral group
     s_detail = Slider(ax_detail, 'bil_detail', 0.0, 2.0, valinit=settings.bilateral_detail)
@@ -173,6 +181,13 @@ def interactive_debayer(bayer_image: torch.Tensor, input_path: Path) -> None:
     # PPG group
     s_ppg_med = Slider(ax_ppg_med, 'ppg_median', 0.0, 1.0, valinit=settings.ppg_median_threshold)
     
+    # Postprocess group
+    s_postprocess_thresh = Slider(ax_postprocess_thresh, 'postproc_thresh', 0.001, 0.1, valinit=settings.postprocess_green_eq_threshold)
+    
+    # Color adjustment group
+    s_saturation = Slider(ax_saturation, 'saturation', -1.0, 1.0, valinit=settings.saturation)
+    s_intensity = Slider(ax_intensity, 'intensity', -1.0, 3.0, valinit=settings.tonemap.intensity)
+    
     # Save button
     ax_save = plt.axes((0.22, 0.015, 0.06, 0.04))
     btn_save = Button(ax_save, 'Save JPEG')
@@ -181,6 +196,7 @@ def interactive_debayer(bayer_image: torch.Tensor, input_path: Path) -> None:
     ax_sigma.set_zorder(10)
     ax_sigma_r.set_zorder(10)
     ax_wiener_sigma.set_zorder(10)
+    ax_postprocess_thresh.set_zorder(10)
 
     def update_display():
         new_img = compute_rgb()
@@ -214,6 +230,7 @@ def interactive_debayer(bayer_image: torch.Tensor, input_path: Path) -> None:
     def on_cb(label):
         if label == 'postprocess':
             settings.use_postprocess = not settings.use_postprocess
+            set_postprocess_enabled(settings.use_postprocess)
         elif label == 'wiener':
             settings.use_wiener = not settings.use_wiener
             set_wiener_enabled(settings.use_wiener)
@@ -227,11 +244,15 @@ def interactive_debayer(bayer_image: torch.Tensor, input_path: Path) -> None:
         update_display()
 
     def on_gamma(val):
-        settings.tonemap_gamma = float(val)
+        settings.tonemap.gamma = float(val)
         update_display()
 
+    def on_saturation(val):
+        settings.saturation = float(val)
+        update_display()
+    
     def on_intensity(val):
-        settings.tonemap_intensity = float(val)
+        settings.tonemap.intensity = float(val)
         update_display()
 
     def on_detail(val):
@@ -247,7 +268,7 @@ def interactive_debayer(bayer_image: torch.Tensor, input_path: Path) -> None:
         update_display()
 
     def on_light(val):
-        settings.tonemap_light_adapt = float(val)
+        settings.tonemap.light_adapt = float(val)
         update_display()
 
     def on_sigma_r(val):
@@ -258,10 +279,20 @@ def interactive_debayer(bayer_image: torch.Tensor, input_path: Path) -> None:
         s_ppg_med.set_active(enabled)
         ax_ppg_med.patch.set_alpha(1.0 if enabled else 0.3)
 
+    def set_postprocess_enabled(enabled: bool):
+        s_postprocess_thresh.set_active(enabled)
+        ax_postprocess_thresh.patch.set_alpha(1.0 if enabled else 0.3)
+
     def on_ppg_median(val):
         nonlocal ppg_workspace
         settings.ppg_median_threshold = float(val)
         ppg_workspace.median_threshold = settings.ppg_median_threshold
+        update_display()
+    
+    def on_postprocess_thresh(val):
+        nonlocal postprocess_workspace
+        settings.postprocess_green_eq_threshold = float(val)
+        postprocess_workspace.green_eq_threshold = settings.postprocess_green_eq_threshold
         update_display()
     
     def on_save_jpeg(event):
@@ -283,17 +314,20 @@ def interactive_debayer(bayer_image: torch.Tensor, input_path: Path) -> None:
     rb_tm.on_clicked(on_rb_tm)
     cb.on_clicked(on_cb)
     s_gamma.on_changed(on_gamma)
-    s_intensity.on_changed(on_intensity)
     s_detail.on_changed(on_detail)
     s_wiener_sigma.on_changed(on_wiener_sigma)
     s_sigma.on_changed(on_sigma)
     s_light.on_changed(on_light)
     s_sigma_r.on_changed(on_sigma_r)
     s_ppg_med.on_changed(on_ppg_median)
+    s_postprocess_thresh.on_changed(on_postprocess_thresh)
+    s_saturation.on_changed(on_saturation)
+    s_intensity.on_changed(on_intensity)
     btn_save.on_clicked(on_save_jpeg)
 
     set_bilateral_enabled(settings.use_bilateral)
     set_wiener_enabled(settings.use_wiener)
+    set_postprocess_enabled(settings.use_postprocess)
     update_sigma_enabled()
     set_ppg_enabled(settings.debayer == 'ppg')
 

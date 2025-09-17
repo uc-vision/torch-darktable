@@ -116,10 +116,6 @@ __device__ __forceinline__ float3 operator*(const float3x3& matrix, const float3
     );
 }
 
-// Legacy function for compatibility
-__device__ __forceinline__ float3 mat3x3_mul_vec3(const float* matrix, const float3& vec) {
-    return float3x3(matrix) * vec;
-}
 
 // float3 utility functions
 __device__ __forceinline__ float3 float3_pow(const float3& v, float exp) {

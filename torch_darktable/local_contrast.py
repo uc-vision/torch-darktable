@@ -100,6 +100,16 @@ def bilateral_rgb(
     luminance = extension.compute_luminance(input_image)
     return extension.modify_luminance(input_image, bilateral.process(luminance, float(detail)))
 
+@beartype
+def log_bilateral_rgb(
+    bilateral: "extension.Bilateral",
+    input_image: torch.Tensor,
+    detail: float,
+    eps: float = 1e-6
+) -> torch.Tensor:
+    log_luminance = extension.compute_log_luminance(input_image, eps)
+    return extension.modify_log_luminance(input_image, bilateral.process(log_luminance, float(detail)), eps)
+
 
 
 __all__ = [

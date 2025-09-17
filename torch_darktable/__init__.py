@@ -3,7 +3,7 @@
 # Import all modules
 from . import extension, tonemap, debayer, local_contrast, color_conversion, white_balance, denoise
 
-from .tonemap import Reinhard, aces_tonemap, compute_image_bounds
+from .tonemap import Reinhard, aces_tonemap, linear_tonemap, compute_image_bounds, compute_image_metrics, TonemapParameters
 from .debayer import (
     BayerPattern, Packed12Format,
     create_ppg, create_rcd, create_postprocess,
@@ -14,6 +14,8 @@ from .debayer import (
 from .local_contrast import LaplacianParams, create_laplacian, local_laplacian_rgb, create_bilateral, bilateral_rgb
 from .color_conversion import (
     compute_luminance, modify_luminance,
+    compute_log_luminance, modify_log_luminance,
+    modify_saturation, modify_saturation_mult_add,
     rgb_to_lab, lab_to_rgb,
     rgb_to_xyz, xyz_to_lab, lab_to_xyz, xyz_to_rgb,
     color_transform_3x3
@@ -27,7 +29,7 @@ __all__ = [
     "BayerPattern", "LaplacianParams", "Reinhard",
     
     # Tone mapping
-    "aces_tonemap", "compute_image_bounds",
+    "aces_tonemap", "linear_tonemap", "compute_image_bounds", "compute_image_metrics", "TonemapParameters",
     
     # Debayering and 12-bit encoding
     "create_ppg", "create_rcd", "create_postprocess", "Packed12Format", "bilinear5x5_demosaic",
@@ -40,6 +42,8 @@ __all__ = [
     
     # Color conversions
     "compute_luminance", "modify_luminance",
+    "compute_log_luminance", "modify_log_luminance",
+    "modify_saturation", "modify_saturation_mult_add",
     "rgb_to_lab", "lab_to_rgb", 
     "rgb_to_xyz", "xyz_to_lab", "lab_to_xyz", "xyz_to_rgb",
     "color_transform_3x3",

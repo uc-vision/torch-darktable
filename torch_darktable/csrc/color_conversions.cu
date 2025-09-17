@@ -55,6 +55,26 @@ struct ConvertWithMatrix3x3 {
     }
 };
 
+struct AdjustSaturation {
+    float saturation_mult;
+    float saturation_add;
+    __device__ float3 operator()(float3 rgb) const {
+        return modify_rgb_saturation(rgb, saturation_mult, saturation_add);
+    }
+};
+
+
+struct ConvertSaturationIntensity {
+    float saturation;
+    float intensity;
+    
+    __host__ __device__ ConvertSaturationIntensity(float sat, float intens) : saturation(sat), intensity(intens) {}
+    
+    __device__ float3 operator()(float3 rgb) const {
+        return modify_rgb_saturation_intensity(rgb, saturation, intensity);
+    }
+};
+
 // Generic kernel for color space conversion
 template <typename Converter>
 __global__ void convert_color_kernel(
@@ -91,14 +111,7 @@ torch::Tensor convert_color(const torch::Tensor& input, Converter converter, con
     convert_color_kernel<Converter><<<grid, block>>>(
         input.data_ptr<float>(), output.data_ptr<float>(), width, height, converter);
 
-    cudaError_t err = cudaGetLastError();
-    if (err != cudaSuccess) {
-        throw std::runtime_error(std::string("CUDA error in ") + kernel_name + ": " + cudaGetErrorString(err));
-    }
-    err = cudaDeviceSynchronize();
-    if (err != cudaSuccess) {
-        throw std::runtime_error(std::string("CUDA synchronization error in ") + kernel_name + ": " + cudaGetErrorString(err));
-    }
+    CUDA_CHECK_KERNEL();
     return output;
 }
 
@@ -126,6 +139,16 @@ torch::Tensor rgb_to_lab(const torch::Tensor& rgb) {
 torch::Tensor lab_to_rgb(const torch::Tensor& lab) {
     return convert_color(lab, ConvertLabToRgb{}, "lab_to_rgb");
 }
+
+
+torch::Tensor modify_saturation(const torch::Tensor& rgb, float saturation) {
+    return convert_color(rgb, AdjustSaturation{saturation, 0.0f}, "adjust_saturation");
+}
+
+torch::Tensor modify_saturation_mult_add(const torch::Tensor& rgb, float saturation_mult, float saturation_add) {
+    return convert_color(rgb, AdjustSaturation{saturation_mult, saturation_add}, "adjust_saturation_mult_add");
+}
+
 
 torch::Tensor color_transform_3x3(const torch::Tensor& input, const torch::Tensor& matrix_3x3) {
     TORCH_CHECK(matrix_3x3.dtype() == torch::kFloat32, "Matrix must be float32");
@@ -195,14 +218,7 @@ torch::Tensor extract_channel(const torch::Tensor& input, Converter converter, c
     extract_channel_kernel<Converter><<<grid, block>>>(
         input.data_ptr<float>(), output.data_ptr<float>(), width, height, converter);
 
-    cudaError_t err = cudaGetLastError();
-    if (err != cudaSuccess) {
-        throw std::runtime_error(std::string("CUDA error in ") + kernel_name + ": " + cudaGetErrorString(err));
-    }
-    err = cudaDeviceSynchronize();
-    if (err != cudaSuccess) {
-        throw std::runtime_error(std::string("CUDA synchronization error in ") + kernel_name + ": " + cudaGetErrorString(err));
-    }
+    CUDA_CHECK_KERNEL();
     return output;
 }
 
@@ -236,6 +252,8 @@ struct ModifyLogLuminance {
         return modify_rgb_log_luminance(rgb, log_lum, eps);
     }
 };
+
+
 
 // Generic kernel for color modification
 template <typename Converter>
@@ -281,14 +299,7 @@ torch::Tensor modify_color(const torch::Tensor& input1, const torch::Tensor& inp
         input1.data_ptr<float>(), input2.data_ptr<float>(), output.data_ptr<float>(), 
         width, height, converter);
 
-    cudaError_t err = cudaGetLastError();
-    if (err != cudaSuccess) {
-        throw std::runtime_error(std::string("CUDA error in ") + kernel_name + ": " + cudaGetErrorString(err));
-    }
-    err = cudaDeviceSynchronize();
-    if (err != cudaSuccess) {
-        throw std::runtime_error(std::string("CUDA synchronization error in ") + kernel_name + ": " + cudaGetErrorString(err));
-    }
+    CUDA_CHECK_KERNEL();
     return output;
 }
 
@@ -301,3 +312,4 @@ torch::Tensor modify_log_luminance(const torch::Tensor& rgb, const torch::Tensor
     TORCH_CHECK(eps > 0.0f, "Epsilon must be positive");
     return modify_color(rgb, log_luminance, ModifyLogLuminance{eps}, "modify_log_luminance");
 }
+

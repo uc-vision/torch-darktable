@@ -226,12 +226,9 @@ __global__ void normalize_and_crop_kernel(
 }
 
 
-template<int K, int C = 3>
+template<int K>
 struct WienerImpl final : public Wiener {
     static_assert(K == 16 || K == 32, "K must be 16 or 32");
-    static_assert(C == 1 || C == 3, "C must be 1 or 3");
-    
-    typedef typename pixel_type<C>::type pixel;
 
     torch::Device device_;
     int overlap_factor_;
@@ -245,8 +242,12 @@ public:
         Window<K>::init(fft_scale, interp_scale);
     }
     
-    
-    torch::Tensor process(const torch::Tensor &input, const torch::Tensor &noise_sigmas) override {
+private:
+    template<int C>
+    torch::Tensor _process(const torch::Tensor &input, const torch::Tensor &noise_sigmas) {
+        static_assert(C == 1 || C == 3, "C must be 1 or 3");
+        
+        typedef typename pixel_type<C>::type pixel;
         TORCH_CHECK(input.device() == device_, "input device mismatch");
         TORCH_CHECK(input.dim() == 3, "expected HWC tensor");
 
@@ -302,11 +303,23 @@ public:
             H, W, h_pad, w_pad
         );
         
-        // Synchronize to catch runtime errors
-        cuda_err = cudaDeviceSynchronize();
-        TORCH_CHECK(cuda_err == cudaSuccess, "Kernel execution failed: ", cudaGetErrorString(cuda_err));
+        CUDA_CHECK_KERNEL();
         
         return final_out;
+    }
+
+public:
+    torch::Tensor process(const torch::Tensor &input, const torch::Tensor &noise_sigmas) override {
+        TORCH_CHECK(input.dim() == 3, "expected HWC tensor");
+        const int input_C = static_cast<int>(input.size(2));
+        
+        if (input_C == 1) {
+            return _process<1>(input, noise_sigmas);
+        } else if (input_C == 3) {
+            return _process<3>(input, noise_sigmas);
+        } else {
+            TORCH_CHECK(false, "input channels must be 1 or 3, got ", input_C);
+        }
     }
     
     int get_overlap_factor() const override { return overlap_factor_; }
@@ -317,16 +330,12 @@ public:
 } // namespace
 
 std::shared_ptr<Wiener> create_wiener(torch::Device device,
-    int width, int height, int overlap_factor, int tile_size, int channels) {
+    int width, int height, int overlap_factor, int tile_size) {
 
-    if (tile_size == 16 && channels == 1) {
-        return std::make_shared<WienerImpl<16, 1>>(device,  overlap_factor);
-    } else if (tile_size == 16 && channels == 3) {
-        return std::make_shared<WienerImpl<16, 3>>(device,  overlap_factor);
-    } else if (tile_size == 32 && channels == 1) {
-        return std::make_shared<WienerImpl<32, 1>>(device,  overlap_factor);
+    if (tile_size == 16) {
+        return std::make_shared<WienerImpl<16>>(device,  overlap_factor);
     } else {
-        return std::make_shared<WienerImpl<32, 3>>(device,  overlap_factor);
+        return std::make_shared<WienerImpl<32>>(device,  overlap_factor);
     }
 }
 

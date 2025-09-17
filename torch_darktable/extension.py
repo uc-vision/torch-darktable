@@ -16,8 +16,12 @@ def _load_cuda_extension(debug: bool = False, verbose: bool = False):
         "local_contrast/bilateral.cu",
         "color_conversions.cu",
         "packed.cu",
+
+        "tonemap/color_adaption.cu",
         "tonemap/aces.cu",
+        "tonemap/linear.cu",
         "tonemap/reinhard.cu",
+
         "white_balance.cu",
         "denoise/denoise.cu",
     ]

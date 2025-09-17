@@ -119,7 +119,7 @@ std::tuple<torch::Tensor, torch::Tensor> collect_samples(
         );
     }
     
-    cudaDeviceSynchronize();
+    CUDA_CHECK_KERNEL();
     
     // Filter to valid samples (mask is true for valid)
     return std::make_tuple(
@@ -178,7 +178,7 @@ torch::Tensor apply_white_balance(
         result.data_ptr<float>(), wb_gains, pattern, width, height
     );
     
-    cudaDeviceSynchronize();
+    CUDA_CHECK_KERNEL();
     return result;
 }
 

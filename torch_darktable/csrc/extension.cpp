@@ -39,7 +39,7 @@ std::shared_ptr<Bilateral> create_bilateral(torch::Device device,
   int width, int height, float sigma_s, float sigma_r);
 
 std::shared_ptr<Wiener> create_wiener(torch::Device device, int width, int height,
-  int overlap_factor, int tile_size, int channels);
+  int overlap_factor, int tile_size);
 
 
 #pragma GCC diagnostic push
@@ -121,6 +121,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
           py::arg("rgb"), py::arg("eps"));
     m.def("modify_log_luminance", &modify_log_luminance, "Update RGB image with modified log luminance",
           py::arg("rgb"), py::arg("log_luminance"), py::arg("eps"));
+    m.def("modify_saturation", &modify_saturation, "Update RGB image with modified saturation",
+          py::arg("rgb"), py::arg("saturation"));
+    m.def("modify_saturation_mult_add", &modify_saturation_mult_add, "Update RGB image with multiplicative and additive saturation adjustments",
+          py::arg("rgb"), py::arg("saturation_mult"), py::arg("saturation_add"));
 
     m.def("rgb_to_xyz", &rgb_to_xyz, "Convert RGB to XYZ color space",
           py::arg("rgb"));
@@ -152,17 +156,28 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("decode12_u16", &decode12_u16, "Decode packed 12-bit to uint16",
           py::arg("input"), py::arg("ids_format") = false);
 
+    // TonemapParams struct
+    py::class_<TonemapParams>(m, "TonemapParams")
+        .def(py::init<>())
+        .def(py::init<float, float, float>(), 
+             py::arg("gamma"), py::arg("intensity"), py::arg("light_adapt"))
+        .def_readwrite("gamma", &TonemapParams::gamma)
+        .def_readwrite("intensity", &TonemapParams::intensity)
+        .def_readwrite("light_adapt", &TonemapParams::light_adapt);
+
     // Tone mapping functions
-    m.def("compute_image_bounds", &compute_image_bounds, "Compute min/max bounds of image",
-          py::arg("image"), py::arg("stride") = 8);
+    m.def("compute_image_bounds", &compute_image_bounds, "Compute min/max bounds of images",
+          py::arg("images"), py::arg("stride") = 8);
     m.def("compute_image_metrics", &compute_image_metrics, "Compute 9-vector image metrics for tone mapping",
           py::arg("images"), py::arg("stride") = 8, py::arg("min_gray") = 1e-4f);
+    
+    // Struct-based tonemap functions (only interface)
     m.def("reinhard_tonemap", &reinhard_tonemap, "Apply Reinhard tone mapping",
-          py::arg("image"), py::arg("metrics"), 
-          py::arg("gamma") = 1.0f, py::arg("intensity") = 1.0f, 
-          py::arg("light_adapt") = 0.8f);
+          py::arg("image"), py::arg("metrics"), py::arg("params"));
     m.def("aces_tonemap", &aces_tonemap, "Apply ACES tone mapping",
-          py::arg("image"), py::arg("gamma") = 2.2f);
+          py::arg("image"), py::arg("metrics"), py::arg("params"));
+    m.def("linear_tonemap", &linear_tonemap, "Apply linear tone mapping",
+          py::arg("image"), py::arg("metrics"), py::arg("params"));
 
     // Expose BayerPattern enum
     py::enum_<BayerPattern>(m, "BayerPattern")
@@ -185,7 +200,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     py::class_<Wiener, std::shared_ptr<Wiener>>(m, "Wiener")
         .def(py::init(&create_wiener), "Create Wiener denoiser",
              py::arg("device"), py::arg("width"), py::arg("height"),
-             py::arg("overlap_factor") = 4, py::arg("tile_size") = 32, py::arg("channels") = 3)
+             py::arg("overlap_factor") = 4, py::arg("tile_size") = 32)
         .def("process", &Wiener::process, "Process image with Wiener filter",
              py::arg("input"), py::arg("noise_sigmas"))
         .def_property_readonly("overlap_factor", &Wiener::get_overlap_factor, "Overlap factor (read-only)");

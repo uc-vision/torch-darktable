@@ -15,7 +15,7 @@ class Wiener:
     
     @beartype
     def __init__(self, device: torch.device, image_size: tuple[int, int], 
-                 overlap_factor: int = 4, tile_size: int = 32, channels: int = 3):
+                 overlap_factor: int = 4, tile_size: int = 32):
         width, height = image_size
         
         # Validate parameters
@@ -26,36 +26,36 @@ class Wiener:
         check_overlap_factor(overlap_factor)
         if tile_size not in [16, 32]:
             raise ValueError(f"tile_size must be 16 or 32, got {tile_size}")
-        if channels not in [1, 3]:
-            raise ValueError(f"channels must be 1 or 3, got {channels}")
 
         try:
-            self._wiener = extension.Wiener(device, width, height, overlap_factor, tile_size, channels)
+            self._wiener = extension.Wiener(device, width, height, overlap_factor, tile_size)
         except Exception as e:
             raise RuntimeError(f"Failed to create Wiener extension: {e}") from e
             
         self._tile_size = tile_size
-        self._channels = channels
         self._device = device
 
 
     def __repr__(self):
-        return f"Wiener(overlap_factor={self.overlap_factor} tile_size={self._tile_size} channels={self._channels})"
+        return f"Wiener(overlap_factor={self.overlap_factor} tile_size={self._tile_size})"
 
 
     def process_luminance(self, image: torch.Tensor, noise: float | torch.Tensor) -> torch.Tensor:
-      assert self._channels == 1, "Wiener can only process luminance for 1 channel"
-
+      # Process luminance channel only (single channel processing)
       luminance = extension.compute_luminance(image)
       modified = self.process(luminance.unsqueeze(2), noise).squeeze(2)
       return extension.modify_luminance(image, modified)
 
-    def process_log_luminance(self, image: torch.Tensor, noise: float | torch.Tensor) -> torch.Tensor:
-      assert self._channels == 1, "Wiener can only process luminance for 1 channel"
+    def process_log_luminance(self, image: torch.Tensor, noise: float | torch.Tensor, eps: float = 1e-4) -> torch.Tensor:
+      log_luminance = extension.compute_log_luminance(image, eps=eps)
+      modified = self.process(log_luminance.unsqueeze(2), noise).squeeze(2)
+      return extension.modify_log_luminance(image, modified, eps=eps)
 
-      luminance = extension.compute_luminance(image)
-      modified = self.process(luminance.unsqueeze(2), noise).squeeze(2)
-      return extension.modify_luminance(image, modified)
+
+    def process_log(self, image: torch.Tensor, noise: float | torch.Tensor, eps: float = 1e-4) -> torch.Tensor:
+      log_rgb = (image + eps).log()
+      return self.process(log_rgb, noise).exp()
+
 
 
     @property
@@ -76,16 +76,21 @@ class Wiener:
         Returns:
             Denoised image of same shape
         """
+        # Determine channels from input image
+        channels = image.size(2)
+        if channels not in [1, 3]:
+            raise ValueError(f"image channels must be 1 or 3, got {channels}")
+            
         if isinstance(noise, float):
             # Single float for all channels
-            noise_sigmas = torch.tensor([noise] * self._channels, 
+            noise_sigmas = torch.tensor([noise] * channels, 
                                        dtype=torch.float32, device=self._device)
         elif isinstance(noise, torch.Tensor):
-            if noise.shape != (self._channels,):
-                raise ValueError(f"noise tensor must have {self._channels} elements")
+            if noise.shape != (channels,):
+                raise ValueError(f"noise tensor must have {channels} elements for {channels}-channel image")
             noise_sigmas = noise.to(dtype=torch.float32, device=self._device)
         else:
-            raise ValueError(f"noise must be float, or Tensor[{self._channels}]")
+            raise ValueError(f"noise must be float, or Tensor[{channels}]")
            
         return self._wiener.process(image, noise_sigmas)
 
@@ -100,8 +105,7 @@ def create_wiener(
     image_size: tuple[int, int],
     *,
     overlap: int = 4,
-    tile_size: int = 32,
-    channels: int = 3
+    tile_size: int = 32
 ) -> Wiener:
     """
     Create a Wiener denoiser object with flexible noise handling.
@@ -111,12 +115,11 @@ def create_wiener(
         image_size: (width, height) of the image
         overlap: Overlap factor (2=half, 4=quarter, 8=eighth block overlap)
         tile_size: Tile size (16 for 16x16 tiles, 32 for 32x32 tiles)
-        channels: Number of channels (1 for grayscale, 3 for RGB)
         
     Returns:
-        High-level Wiener denoiser object
+        High-level Wiener denoiser object that can handle both 1 and 3 channel images
     """
-    return Wiener(device, image_size, overlap_factor=overlap, tile_size=tile_size, channels=channels)
+    return Wiener(device, image_size, overlap_factor=overlap, tile_size=tile_size)
 
 
 @beartype

@@ -120,6 +120,16 @@ __device__ float3 xyz_to_rgb(float3 xyz) {
     return linear_to_srgb(linear_rgb);
 }
 
+__device__ float3 xyz_to_linear_rgb(float3 xyz) {
+    const float3x3 xyz_to_rgb_matrix(
+         3.2404542f, -1.5371385f, -0.4985314f,
+        -0.9692660f,  1.8760108f,  0.0415560f,
+         0.0556434f, -0.2040259f,  1.0572252f
+    );
+    
+    return xyz_to_rgb_matrix * xyz;  // Stay in linear space
+}
+
 __device__ float3 rgb_to_lab(float3 rgb) {
     return xyz_to_lab(rgb_to_xyz(rgb));
 }
@@ -156,4 +166,38 @@ __device__ float3 modify_rgb_log_luminance(float3 rgb, float log_luminance, floa
     float lum = fmaxf(0.0f, fminf(1.0f, expf(log_luminance)));
     float3 new_lab = make_float3(lum * 100.0f, lab.y, lab.z);
     return clamp01(lab_to_rgb(new_lab));
+}
+
+__device__ float3 modify_rgb_saturation(float3 rgb, float saturation_mult, float saturation_add = 0.0f) {
+    float3 lab = rgb_to_lab(rgb);
+    // Apply multiplicative adjustment
+    float mult_factor = fmaxf(0.0f, saturation_mult);
+    // Apply additive adjustment (convert to factor: 0 = identity, +ve = more, -ve = less)
+    float add_factor = 1.0f + saturation_add;
+    add_factor = fmaxf(0.0f, add_factor);
+    
+    // Combine both adjustments
+    float combined_factor = mult_factor * add_factor;
+    float3 new_lab = make_float3(lab.x, lab.y * combined_factor, lab.z * combined_factor);
+    return clamp01(lab_to_rgb(new_lab));
+}
+
+__device__ float3 modify_rgb_saturation_intensity(float3 rgb, float saturation, float intensity) {
+    // Convert relative adjustments: 0 = identity, +ve = more, -ve = less
+    float sat_factor = 1.0f + saturation;  // 0 -> 1.0 (identity), +1 -> 2.0, -1 -> 0.0
+    
+    // Clamp saturation factor to reasonable range
+    sat_factor = fmaxf(0.0f, sat_factor);
+    
+    // Work in LAB space for proper perceptual adjustments
+    float3 lab = rgb_to_lab(rgb);
+    
+    // Apply intensity: additive adjustment to L* channel (scale for LAB range)
+    float intensity_scaled = intensity * 50.0f;  // Scale for LAB L* range (0-100)
+    float new_l = lab.x + intensity_scaled;
+    
+    // Apply saturation: multiplicative adjustment to a*, b* channels
+    float3 new_lab = make_float3(new_l, lab.y * sat_factor, lab.z * sat_factor);
+    
+    return xyz_to_linear_rgb(lab_to_xyz(new_lab));
 }

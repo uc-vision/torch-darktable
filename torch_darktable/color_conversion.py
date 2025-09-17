@@ -72,6 +72,48 @@ def modify_log_luminance(
 
 
 @beartype
+def modify_saturation(
+    rgb_image: torch.Tensor,
+    saturation: float
+) -> torch.Tensor:
+    """
+    Update RGB image with modified saturation.
+    
+    Args:
+        rgb_image: Input RGB image tensor of shape (H, W, 3) with values in [0, 1]
+        saturation: Saturation multiplier where 1.0 = no change,
+                   0.0 = grayscale, >1.0 = more saturated
+        
+    Returns:
+        Modified RGB image tensor of shape (H, W, 3)
+    """
+    return extension.modify_saturation(rgb_image, saturation)
+
+
+@beartype
+def modify_saturation_mult_add(
+    rgb_image: torch.Tensor,
+    saturation_mult: float,
+    saturation_add: float
+) -> torch.Tensor:
+    """
+    Update RGB image with multiplicative and additive saturation adjustments.
+    
+    Args:
+        rgb_image: Input RGB image tensor of shape (H, W, 3) with values in [0, 1]
+        saturation_mult: Multiplicative saturation factor where 1.0 = no change,
+                        0.0 = grayscale, >1.0 = more saturated
+        saturation_add: Additive saturation adjustment where 0.0 = no change,
+                       positive values increase saturation, negative decrease
+        
+    Returns:
+        Modified RGB image tensor of shape (H, W, 3)
+    """
+    return extension.modify_saturation_mult_add(rgb_image, saturation_mult, saturation_add)
+
+
+
+@beartype
 def rgb_to_lab(rgb_image: torch.Tensor) -> torch.Tensor:
     """
     Convert RGB to CIELAB color space.
@@ -171,7 +213,7 @@ def color_transform_3x3(image: torch.Tensor, matrix_3x3: torch.Tensor) -> torch.
 
 
 __all__ = [
-    "compute_luminance", "modify_luminance", "compute_log_luminance", "modify_log_luminance",
+    "compute_luminance", "modify_luminance", "compute_log_luminance", "modify_log_luminance", "modify_saturation", "modify_saturation_mult_add",
     "rgb_to_lab", "lab_to_rgb",
     "rgb_to_xyz", "xyz_to_lab", "lab_to_xyz", "xyz_to_rgb",
     "color_transform_3x3"

@@ -14,8 +14,7 @@ std::shared_ptr<Wiener> create_wiener(
     int width,
     int height,
     int overlap_factor,
-    int tile_size = 32,
-    int channels = 3);
+    int tile_size = 32);
 
 
 

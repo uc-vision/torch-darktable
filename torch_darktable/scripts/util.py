@@ -55,7 +55,7 @@ camera_settings = dict(
     ),
     ids=CameraSettings(
       name='ids',
-      image_size=(2472, 2048), 
+      image_size=(2472, 2062), 
       ids_format=True, 
       white_balance=(1.5, 1.0, 1.5), 
       brightness=1.0,

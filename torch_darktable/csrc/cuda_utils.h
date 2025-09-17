@@ -24,12 +24,18 @@ static constexpr dim3 block_size_2d = dim3(image_block_size, image_block_size);
     } \
 } while(0)
 
-#define CUDA_CHECK_KERNEL() do { \
-    cudaError_t err = cudaGetLastError(); \
-    if (err != cudaSuccess) { \
-        throw std::runtime_error(std::string("CUDA kernel error: ") + cudaGetErrorString(err)); \
-    } \
-} while(0)
+#ifdef NDEBUG
+    // Release mode: no-op for performance
+    #define CUDA_CHECK_KERNEL() do { } while(0)
+#else
+    // Debug mode: synchronize and check for any errors (launch + execution)
+    #define CUDA_CHECK_KERNEL() do { \
+        cudaError_t err = cudaDeviceSynchronize(); \
+        if (err != cudaSuccess) { \
+            throw std::runtime_error(std::string("CUDA kernel error: ") + cudaGetErrorString(err)); \
+        } \
+    } while(0)
+#endif
 
 struct CudaTimer {
     std::vector<cudaEvent_t> events;
@@ -151,4 +157,11 @@ __device__ inline void write_imagef_generic(T* output, int2 coord, int2 size, fl
 template<>
 __device__ inline void write_imagef_generic<float>(float* output, int2 coord, int2 size, float_t value) {
     output[coord.y * size.x + coord.x] = value;
+}
+
+
+static inline void check_image(const torch::Tensor& image) {
+  TORCH_CHECK(image.device().is_cuda(), "image must be CUDA");
+  TORCH_CHECK(image.dtype() == torch::kFloat32, "image must be float32");
+  TORCH_CHECK(image.dim() == 3 && image.size(2) == 3, "image must be (H,W,3)");
 }
