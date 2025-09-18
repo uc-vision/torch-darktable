@@ -1,5 +1,6 @@
-import torch
 from enum import Enum
+
+import torch
 
 # Bayer pattern enumeration
 class BayerPattern(Enum):

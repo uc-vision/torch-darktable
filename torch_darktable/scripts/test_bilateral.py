@@ -1,10 +1,11 @@
-import torch
 import argparse
 from pathlib import Path
+
 import cv2
 import numpy as np
+import torch
 
-from torch_darktable import create_bilateral, bilateral_rgb
+from torch_darktable import bilateral_rgb, create_bilateral
 
 
 def reinhard(image: torch.Tensor, epsilon=1e-4, base_key=0.18, gamma=0.75) -> torch.Tensor:
@@ -21,7 +22,7 @@ def load_rgb_image(image_path: Path) -> torch.Tensor:
   img_array = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
 
   rgb_array = img_array.astype(np.float32)
-  rgb_array = rgb_array / max(float(np.max(rgb_array)), 1.0)
+  rgb_array /= max(float(np.max(rgb_array)), 1.0)
   return torch.from_numpy(rgb_array).cuda()
 
 

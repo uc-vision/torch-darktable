@@ -1,8 +1,9 @@
-import torch
 import argparse
 from pathlib import Path
+
 import cv2
 import numpy as np
+import torch
 
 import torch_darktable as td
 
@@ -13,7 +14,7 @@ def load_rgb_image(image_path: Path) -> torch.Tensor:
   img_array = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
 
   rgb_array = img_array.astype(np.float32)
-  rgb_array = rgb_array / max(float(np.max(rgb_array)), 1.0)
+  rgb_array /= max(float(np.max(rgb_array)), 1.0)
   return torch.from_numpy(rgb_array).cuda()
 
 
@@ -22,9 +23,8 @@ def get_noise_level(args, input_rgb):
     noise_level = td.estimate_channel_noise(input_rgb)
     print(f'Estimated per-channel noise: R={noise_level[0]:.4f}, G={noise_level[1]:.4f}, B={noise_level[2]:.4f}')
     return noise_level * args.noise_scale
-  else:
-    print(f'Using manual noise level: {args.sigma}')
-    return args.sigma
+  print(f'Using manual noise level: {args.sigma}')
+  return args.sigma
 
 
 def test_denoise(image_path: Path, args):

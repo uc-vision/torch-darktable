@@ -1,8 +1,9 @@
 """CUDA extension loading and basic types."""
 
 import os
-from typing import TYPE_CHECKING
 from pathlib import Path
+from typing import TYPE_CHECKING
+
 from torch.utils import cpp_extension
 
 

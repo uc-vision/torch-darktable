@@ -1,9 +1,11 @@
 import argparse
 from pathlib import Path
-import numpy as np
-import cv2
-from torch_darktable import create_ppg, create_rcd, create_postprocess, BayerPattern
+import sys
 
+import cv2
+import numpy as np
+
+from torch_darktable import BayerPattern, create_postprocess, create_ppg, create_rcd
 from torch_darktable.debayer import create_bilinear
 from torch_darktable.scripts.util import display_rgb
 from torch_darktable.utilities import load_image, rgb_to_bayer
@@ -114,4 +116,4 @@ def main():
 
 
 if __name__ == '__main__':
-  exit(main())
+  sys.exit(main())

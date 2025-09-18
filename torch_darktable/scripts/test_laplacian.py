@@ -1,11 +1,11 @@
-import torch
 import argparse
 from pathlib import Path
+
 import cv2
 import numpy as np
+import torch
 
-from torch_darktable import local_laplacian_rgb, create_laplacian, LaplacianParams
-from torch_darktable import compute_luminance
+from torch_darktable import LaplacianParams, compute_luminance, create_laplacian, local_laplacian_rgb
 
 
 def create_laplacian_algorithm(device, height, width, args):
@@ -41,7 +41,7 @@ def load_rgb_image(image_path: Path) -> torch.Tensor:
   rgb_array = img_array.astype(np.float32)
   print(f'range: {np.min(rgb_array):.3f} - {np.max(rgb_array):.3f}')
 
-  rgb_array = rgb_array / np.max(rgb_array)
+  rgb_array /= np.max(rgb_array)
 
   return torch.from_numpy(rgb_array).cuda()
 

@@ -1,9 +1,9 @@
-import torch
-import numpy as np
 from pathlib import Path
-from PIL import Image
-from .extension import extension
+
 from beartype import beartype
+import numpy as np
+from PIL import Image
+import torch
 
 
 @beartype

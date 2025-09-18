@@ -1,9 +1,11 @@
 """Local contrast enhancement algorithms."""
 
-import torch
 from dataclasses import dataclass
-from .extension import extension
+
 from beartype import beartype
+import torch
+
+from .extension import extension
 
 
 @beartype
@@ -109,8 +111,8 @@ def log_bilateral_rgb(
 
 __all__ = [
   'LaplacianParams',
+  'bilateral_rgb',
+  'create_bilateral',
   'create_laplacian',
   'local_laplacian_rgb',
-  'create_bilateral',
-  'bilateral_rgb',
 ]

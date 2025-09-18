@@ -1,8 +1,9 @@
 """Color space conversion functions."""
 
-import torch
-from .extension import extension
 from beartype import beartype
+import torch
+
+from .extension import extension
 
 
 @beartype
@@ -205,17 +206,17 @@ def color_transform_3x3(image: torch.Tensor, matrix_3x3: torch.Tensor) -> torch.
 
 
 __all__ = [
-  'compute_luminance',
-  'modify_luminance',
+  'color_transform_3x3',
   'compute_log_luminance',
-  'modify_log_luminance',
+  'compute_luminance',
+  'lab_to_rgb',
+  'lab_to_xyz',
   'modify_hsl',
+  'modify_log_luminance',
+  'modify_luminance',
   'modify_vibrance',
   'rgb_to_lab',
-  'lab_to_rgb',
   'rgb_to_xyz',
   'xyz_to_lab',
-  'lab_to_xyz',
   'xyz_to_rgb',
-  'color_transform_3x3',
 ]

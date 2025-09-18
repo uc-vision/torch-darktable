@@ -1,8 +1,10 @@
 """Bayer demosaicing algorithms and utilities."""
 
+from enum import Enum
+
 from beartype import beartype
 import torch
-from enum import Enum
+
 from .extension import extension
 
 
@@ -104,10 +106,9 @@ def encode12(image: torch.Tensor, format_type: Packed12Format = Packed12Format.S
   ids = format_type is Packed12Format.IDS
   if image.dtype == torch.uint16:
     return extension.encode12_u16(image, ids_format=ids)
-  elif image.dtype == torch.float32:
+  if image.dtype == torch.float32:
     return extension.encode12_float(image, ids_format=ids)
-  else:
-    raise ValueError(f'Unsupported input dtype: {image.dtype}')
+  raise ValueError(f'Unsupported input dtype: {image.dtype}')
 
 
 @beartype
@@ -130,12 +131,11 @@ def decode12(
   ids = format_type is Packed12Format.IDS
   if output_dtype == torch.float32:
     return extension.decode12_float(packed_data, ids_format=ids)
-  elif output_dtype == torch.float16:
+  if output_dtype == torch.float16:
     return extension.decode12_half(packed_data, ids_format=ids)
-  elif output_dtype == torch.uint16:
+  if output_dtype == torch.uint16:
     return extension.decode12_u16(packed_data, ids_format=ids)
-  else:
-    raise ValueError(f'Unsupported output dtype: {output_dtype}')
+  raise ValueError(f'Unsupported output dtype: {output_dtype}')
 
 
 # Direct extension function access for individual functions
@@ -164,15 +164,15 @@ def bilinear5x5_demosaic(image: torch.Tensor, bayer_pattern: BayerPattern) -> to
 __all__ = [
   'BayerPattern',
   'Packed12Format',
+  'bilinear5x5_demosaic',
+  'create_postprocess',
   'create_ppg',
   'create_rcd',
-  'create_postprocess',
-  'bilinear5x5_demosaic',
-  'encode12',
   'decode12',
-  'encode12_u16',
-  'encode12_float',
   'decode12_float',
   'decode12_half',
   'decode12_u16',
+  'encode12',
+  'encode12_float',
+  'encode12_u16',
 ]

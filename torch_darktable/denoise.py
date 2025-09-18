@@ -1,10 +1,11 @@
 from beartype import beartype
-from .extension import extension
 import torch
+
+from .extension import extension
 
 
 def check_overlap_factor(overlap_factor: int):
-  if overlap_factor not in [2, 4, 8]:
+  if overlap_factor not in {2, 4, 8}:
     raise ValueError('overlap_factor must be 2, 4, or 8')
 
 
@@ -27,7 +28,7 @@ class Wiener:
     if width <= 0 or height <= 0:
       raise ValueError(f'Image dimensions must be positive, got {width}x{height}')
     check_overlap_factor(overlap_factor)
-    if tile_size not in [16, 32]:
+    if tile_size not in {16, 32}:
       raise ValueError(f'tile_size must be 16 or 32, got {tile_size}')
 
     try:
@@ -76,7 +77,7 @@ class Wiener:
     """
     # Determine channels from input image
     channels = image.size(2)
-    if channels not in [1, 3]:
+    if channels not in {1, 3}:
       raise ValueError(f'image channels must be 1 or 3, got {channels}')
 
     if isinstance(noise, float):

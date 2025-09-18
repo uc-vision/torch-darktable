@@ -1,9 +1,10 @@
 """White balance estimation and application for Bayer images."""
 
-import torch
-from .extension import extension
-from .debayer import BayerPattern
 from beartype import beartype
+import torch
+
+from .debayer import BayerPattern
+from .extension import extension
 
 
 @beartype

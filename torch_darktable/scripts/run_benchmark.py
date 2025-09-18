@@ -1,13 +1,14 @@
-from functools import partial
-import torch
 import argparse
+from collections.abc import Callable
+from functools import partial
 from pathlib import Path
-from typing import Callable
 
+import torch
+
+import torch_darktable as td
 from torch_darktable import BayerPattern
 from torch_darktable.local_contrast import LaplacianParams
 from torch_darktable.utilities import load_image, rgb_to_bayer
-import torch_darktable as td
 
 
 def benchmark(name: str, func: Callable, *args, warmup_iters: int = 5, bench_iters: int = 50) -> float:
