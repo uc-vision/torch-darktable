@@ -1,10 +1,11 @@
 import argparse
 from pathlib import Path
-from PIL import Image
 import numpy as np
-
+import cv2
 from torch_darktable import create_ppg, create_rcd, create_postprocess, BayerPattern
-from torch_darktable.debayer import create_bilinear
+
+from torch_darktable.debayer import create_bilinear, create_amaze
+from torch_darktable.scripts.util import display_rgb
 from torch_darktable.utilities import load_image, rgb_to_bayer
 
 
@@ -36,14 +37,16 @@ def test_demosaic(image_path: Path, pattern: BayerPattern, args):
         debayer_alg = create_bilinear(pattern)
     elif args.ppg:
         debayer_alg = create_ppg(device, (width, height), pattern, median_threshold=args.median_threshold)
+    elif args.amaze:
+        debayer_alg = create_amaze(device, (width, height), pattern, clip_pt=args.clip_pt)
     else: # args.rcd
-        debayer_alg = create_rcd(device, (width, height), pattern, input_scale=args.input_scale, output_scale=args.output_scale)
+        debayer_alg = create_rcd(device, (width, height), pattern)
 
     print(debayer_alg)
     result = debayer_alg.process(bayer_input)
 
     # Apply post-processing if requested
-    if args.color_smoothing_passes > 0 or args.green_eq_local or args.green_eq_global:
+    if args.post_processing:
         print(f"Applying post-processing: smoothing={args.color_smoothing_passes}, green_eq_local={args.green_eq_local}, green_eq_global={args.green_eq_global}")
 
         postprocess_alg = create_postprocess_algorithm(device, width, height, pattern, args)
@@ -51,9 +54,8 @@ def test_demosaic(image_path: Path, pattern: BayerPattern, args):
   
     rgb = result[:, :, :3].clamp(0, 1)
     rgb_np = (rgb.cpu().numpy() * 255).astype(np.uint8)
-    image = Image.fromarray(rgb_np)
-    image.show()
-    
+   
+    display_rgb("RGB", rgb_np)
     
 
 
@@ -66,15 +68,16 @@ def main():
 
     parser.add_argument('--bilinear', action='store_true', help='Use bilinear demosaic')
     parser.add_argument('--ppg', action='store_true', help='Use PPG demosaic')
+    parser.add_argument('--amaze', action='store_true', help='Use AMaZE demosaic')
     parser.add_argument('--rcd', action='store_true', help='Use RCD demosaic')
 
     parser.add_argument('--median_threshold', type=float, default=0.0,
                        help='Median threshold (PPG only)')
+    
+    parser.add_argument('--clip_pt', type=float, default=1.0,
+                       help='Clipping point for highlights (AMaZE only)')
 
-    parser.add_argument('--input_scale', type=float, default=1.0,
-                       help='Input scaling factor (RCD only)')
-    parser.add_argument('--output_scale', type=float, default=1.0,
-                       help='Output scaling factor (RCD only)')
+    parser.add_argument('--post_processing', action='store_true', help='Use post-processing')
     parser.add_argument('--color_smoothing_passes', type=int, default=3,
                        help='Number of color smoothing passes (0 to disable)')
     parser.add_argument('--green_eq_local', action='store_true',

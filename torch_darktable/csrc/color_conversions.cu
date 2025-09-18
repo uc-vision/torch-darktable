@@ -56,24 +56,14 @@ struct ConvertWithMatrix3x3 {
 };
 
 struct AdjustSaturation {
-    float saturation_mult;
-    float saturation_add;
+    float adjustment;
     __device__ float3 operator()(float3 rgb) const {
-        return modify_rgb_saturation(rgb, saturation_mult, saturation_add);
+        return modify_rgb_saturation(rgb, adjustment);
     }
 };
 
 
-struct ConvertSaturationIntensity {
-    float saturation;
-    float intensity;
-    
-    __host__ __device__ ConvertSaturationIntensity(float sat, float intens) : saturation(sat), intensity(intens) {}
-    
-    __device__ float3 operator()(float3 rgb) const {
-        return modify_rgb_saturation_intensity(rgb, saturation, intensity);
-    }
-};
+
 
 // Generic kernel for color space conversion
 template <typename Converter>
@@ -141,13 +131,10 @@ torch::Tensor lab_to_rgb(const torch::Tensor& lab) {
 }
 
 
-torch::Tensor modify_saturation(const torch::Tensor& rgb, float saturation) {
-    return convert_color(rgb, AdjustSaturation{saturation, 0.0f}, "adjust_saturation");
+torch::Tensor modify_saturation(const torch::Tensor& rgb, float adjustment) {
+    return convert_color(rgb, AdjustSaturation{adjustment}, "adjust_saturation");
 }
 
-torch::Tensor modify_saturation_mult_add(const torch::Tensor& rgb, float saturation_mult, float saturation_add) {
-    return convert_color(rgb, AdjustSaturation{saturation_mult, saturation_add}, "adjust_saturation_mult_add");
-}
 
 
 torch::Tensor color_transform_3x3(const torch::Tensor& input, const torch::Tensor& matrix_3x3) {

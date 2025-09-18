@@ -104,7 +104,7 @@ def interactive_debayer(bayer_image: torch.Tensor, input_path: Path) -> None:
 
         # Apply saturation adjustment before tonemapping (if needed)  
         if settings.saturation != 0.0:
-            rgb_raw = td.modify_saturation_mult_add(rgb_raw, 1.0, settings.saturation)
+            rgb_raw = td.modify_saturation(rgb_raw, settings.saturation)
 
         # Compute metrics once
         metrics = td.Reinhard.compute_metrics(rgb_raw, stride=4, min_gray=1e-2)

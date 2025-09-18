@@ -11,6 +11,7 @@ def _load_cuda_extension(debug: bool = False, verbose: bool = False):
         "debayer/bilinear.cu",
         "debayer/ppg.cu",
         "debayer/rcd.cu",
+        "debayer/amaze.cu",
         "debayer/postprocess.cu",
         "local_contrast/laplacian.cu",
         "local_contrast/bilateral.cu",

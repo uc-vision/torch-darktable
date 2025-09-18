@@ -7,8 +7,7 @@ torch::Tensor compute_luminance(const torch::Tensor& rgb);
 torch::Tensor modify_luminance(const torch::Tensor& rgb, const torch::Tensor& new_luminance);
 torch::Tensor compute_log_luminance(const torch::Tensor& rgb, float eps);
 torch::Tensor modify_log_luminance(const torch::Tensor& rgb, const torch::Tensor& log_luminance, float eps);
-torch::Tensor modify_saturation(const torch::Tensor& rgb, float saturation);
-torch::Tensor modify_saturation_mult_add(const torch::Tensor& rgb, float saturation_mult, float saturation_add);
+torch::Tensor modify_saturation(const torch::Tensor& rgb, float adjustment);
 
 // Individual conversion functions
 torch::Tensor rgb_to_xyz(const torch::Tensor& rgb);

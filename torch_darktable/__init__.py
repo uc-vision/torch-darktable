@@ -15,7 +15,7 @@ from .local_contrast import LaplacianParams, create_laplacian, local_laplacian_r
 from .color_conversion import (
     compute_luminance, modify_luminance,
     compute_log_luminance, modify_log_luminance,
-    modify_saturation, modify_saturation_mult_add,
+    modify_saturation,
     rgb_to_lab, lab_to_rgb,
     rgb_to_xyz, xyz_to_lab, lab_to_xyz, xyz_to_rgb,
     color_transform_3x3
@@ -43,7 +43,7 @@ __all__ = [
     # Color conversions
     "compute_luminance", "modify_luminance",
     "compute_log_luminance", "modify_log_luminance",
-    "modify_saturation", "modify_saturation_mult_add",
+    "modify_saturation", 
     "rgb_to_lab", "lab_to_rgb", 
     "rgb_to_xyz", "xyz_to_lab", "lab_to_xyz", "xyz_to_rgb",
     "color_transform_3x3",

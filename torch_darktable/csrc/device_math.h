@@ -74,6 +74,10 @@ __device__ __forceinline__ float fsquare(float x) {
     return x * x;
 }
 
+__device__ __forceinline__ float sqrf(float x) {
+    return x * x;
+}
+
 
 
 __device__ __forceinline__ float dtcl_sqrt(float x) {
@@ -352,4 +356,64 @@ __device__ __forceinline__ float3 select(const bool3& cond, const float3& true_v
         cond.y ? true_val.y : false_val.y,
         cond.z ? true_val.z : false_val.z
     );
+}
+
+// float4 utility functions and operators
+struct bool4 {
+    bool x, y, z, w;
+    __device__ __forceinline__ bool4(bool x_, bool y_, bool z_, bool w_) : x(x_), y(y_), z(z_), w(w_) {}
+};
+
+__device__ __forceinline__ bool4 operator<(const float4& a, float b) {
+    return bool4(a.x < b, a.y < b, a.z < b, a.w < b);
+}
+
+__device__ __forceinline__ float4 select(const bool4& cond, const float4& true_val, const float4& false_val) {
+    return make_float4(
+        cond.x ? true_val.x : false_val.x,
+        cond.y ? true_val.y : false_val.y,
+        cond.z ? true_val.z : false_val.z,
+        cond.w ? true_val.w : false_val.w
+    );
+}
+
+__device__ __forceinline__ float4 abs(const float4& v) {
+    return make_float4(fabsf(v.x), fabsf(v.y), fabsf(v.z), fabsf(v.w));
+}
+
+// float4 arithmetic operators
+__device__ __forceinline__ float4 operator+(const float4& a, const float4& b) {
+    return make_float4(a.x + b.x, a.y + b.y, a.z + b.z, a.w + b.w);
+}
+
+__device__ __forceinline__ float4 operator-(const float4& a, const float4& b) {
+    return make_float4(a.x - b.x, a.y - b.y, a.z - b.z, a.w - b.w);
+}
+
+__device__ __forceinline__ float4 operator*(const float4& a, const float4& b) {
+    return make_float4(a.x * b.x, a.y * b.y, a.z * b.z, a.w * b.w);
+}
+
+__device__ __forceinline__ float4 operator/(const float4& a, const float4& b) {
+    return make_float4(a.x / b.x, a.y / b.y, a.z / b.z, a.w / b.w);
+}
+
+__device__ __forceinline__ float4 operator+(const float4& v, float s) {
+    return make_float4(v.x + s, v.y + s, v.z + s, v.w + s);
+}
+
+__device__ __forceinline__ float4 operator-(const float4& v, float s) {
+    return make_float4(v.x - s, v.y - s, v.z - s, v.w - s);
+}
+
+__device__ __forceinline__ float4 operator*(const float4& v, float s) {
+    return make_float4(v.x * s, v.y * s, v.z * s, v.w * s);
+}
+
+__device__ __forceinline__ float4 operator*(float s, const float4& v) {
+    return make_float4(s * v.x, s * v.y, s * v.z, s * v.w);
+}
+
+__device__ __forceinline__ float4 operator-(float s, const float4& v) {
+    return make_float4(s - v.x, s - v.y, s - v.z, s - v.w);
 }

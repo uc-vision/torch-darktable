@@ -57,6 +57,20 @@ def create_rcd(
     return extension.RCD(device, width, height, bayer_pattern.value, input_scale, output_scale)
 
 @beartype
+def create_amaze(
+    device: torch.device,
+    image_size: tuple[int, int],
+    bayer_pattern: BayerPattern,
+    *,
+    clip_pt: float = 1.0
+) -> extension.AMaZE:
+    """
+    Create an AMaZE demosaic object.
+    """
+    width, height = image_size
+    return extension.AMaZE(device, width, height, bayer_pattern.value, clip_pt)
+
+@beartype
 def create_bilinear(
     bayer_pattern: BayerPattern
 ) -> Bilinear5x5:

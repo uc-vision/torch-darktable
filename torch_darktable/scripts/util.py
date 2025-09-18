@@ -4,6 +4,7 @@ from pathlib import Path
 import torch
 from beartype import beartype
 import torch_darktable as td
+import numpy as np
 import cv2
 
 @beartype
@@ -82,12 +83,18 @@ def settings_for_file(file_path:Path) -> CameraSettings:
 
 
 
-def display_rgb(k, rgb_image):
+def display_rgb(k:str, rgb_image:torch.Tensor | np.ndarray):
+  
   if isinstance(rgb_image, torch.Tensor):
     rgb_image = rgb_image.cpu().numpy()
   cv2.namedWindow(k, cv2.WINDOW_NORMAL)
+  
+  # loop while wiow is not closed
   cv2.imshow(k, cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR))
-  cv2.waitKey(1)
+  while not (cv2.waitKey(1) & 0xFF == ord('q')) or cv2.getWindowProperty(k, cv2.WND_PROP_VISIBLE) >= 1:
+    pass
+
+  cv2.destroyAllWindows()
 
 
 def stack_bayer(bayer_image):
