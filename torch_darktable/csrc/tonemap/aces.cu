@@ -1,10 +1,10 @@
 #include "../cuda_utils.h"
-#include "../device_math.h"
 #include <torch/extension.h>
 #include <cuda_runtime.h>
 
 #include "color_adaption.h"
 #include "tonemap.h"
+#include "device_math.h"
 
 #include <c10/cuda/CUDAStream.h>
 
@@ -37,7 +37,7 @@ __device__ __constant__ ColorTransform transform;
 // ACES tone mapping kernel  
 __global__ void aces_tonemap_kernel(
     const float* __restrict__ input,
-    uint8_t* __restrict__ output,
+    float* __restrict__ output,
     float gamma,
     int height,
     int width
@@ -56,7 +56,8 @@ __global__ void aces_tonemap_kernel(
     float3 tonemapped = aces_tonemap(scaled / adjustment);
 
     float3 gamma_corrected = pow(fmax(tonemapped, 0.0f), 1.0f / gamma);
-    float3_to_uint8_rgb(gamma_corrected, output, idx);
+    // float3_to_uint8_rgb(gamma_corrected, output, idx);
+    float3_store(gamma_corrected, output, idx);
 }
 
 
@@ -75,7 +76,7 @@ torch::Tensor aces_tonemap(
 
     metrics_to_transform(transform, metrics, params, stream);
     
-    auto output = torch::empty({height, width, 3}, torch::dtype(torch::kUInt8).device(image.device()));
+    auto output = torch::empty({height, width, 3}, torch::dtype(torch::kFloat32).device(image.device()));
 
     dim3 block_size(16, 16);
     dim3 grid_size((width + block_size.x - 1) / block_size.x, 
@@ -83,7 +84,7 @@ torch::Tensor aces_tonemap(
 
     aces_tonemap_kernel<<<grid_size, block_size>>>(
         image.data_ptr<float>(),
-        output.data_ptr<uint8_t>(),
+        output.data_ptr<float>(),
         params.gamma,
         height,
         width

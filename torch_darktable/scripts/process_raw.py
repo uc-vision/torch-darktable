@@ -1,20 +1,17 @@
 from pathlib import Path
 import torch
-import os
 import numpy as np
 import argparse
-from dataclasses import dataclass, field
-from typing import Literal
+from dataclasses import replace
 
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider, RadioButtons, CheckButtons, Button
 from PIL import Image
 
 import torch_darktable as td
-from torch_darktable.tonemap import TonemapParameters
-from .util import load_raw_image, camera_settings
+from .pipeline import ImagePipeline
+from .util import load_raw_image, camera_settings, settings_for_file, CameraSettings
 
-from beartype import beartype
 
 
 def set_seed(seed):
@@ -32,129 +29,65 @@ def parse_args():
 
     return parser.parse_args()
 
-@beartype
-@dataclass
-class Settings:
-    debayer: Literal['bilinear', 'rcd', 'ppg'] = 'rcd'
-    tonemap_method: Literal['reinhard', 'aces', 'linear'] = 'reinhard'
-    use_postprocess: bool = True
-    use_bilateral: bool = True
-    use_wiener: bool = False
-    
-    bilateral_detail: float = 0.2
-    bilateral_sigma_s: float = 4.0
-    bilateral_sigma_r: float = 0.2
-    ppg_median_threshold: float = 0.0
-    postprocess_green_eq_threshold: float = 0.04
-
-    tonemap: TonemapParameters = field(default_factory=lambda: TonemapParameters(
-        gamma=0.75,
-        light_adapt=0.9,
-        intensity=1.0
-    ))
-
-    wiener_sigma: float = 0.1
-    saturation: float = 0.0
 
 
-def interactive_debayer(bayer_image: torch.Tensor, input_path: Path) -> None:
+def interactive_debayer(bayer_image: torch.Tensor, input_path: Path, camera_settings: CameraSettings) -> None:
     device = bayer_image.device
-    image_size = (bayer_image.shape[1], bayer_image.shape[0])
+    
+    # Initialize settings with camera default preset
+    settings = ImagePipeline.presets[camera_settings.preset]
+    current_preset = camera_settings.preset
 
-    settings = Settings()
+    # Create pipeline
+    pipeline = ImagePipeline(device, camera_settings, settings)
 
+    wb = td.estimate_white_balance([bayer_image], pattern=camera_settings.bayer_pattern, quantile=0.95)
+    print("White balance: ", wb.tolist())
 
-    # Create bilateral filter
-    bil_workspace = td.create_bilateral(
-        device,
-        image_size,
-        sigma_s=settings.bilateral_sigma_s,
-        sigma_r=settings.bilateral_sigma_r
-    )
-
-    rcd_workspace = td.create_rcd(device, image_size, td.BayerPattern.RGGB, input_scale=1.0, output_scale=1.0)
-    ppg_workspace = td.create_ppg(device, image_size, td.BayerPattern.RGGB, median_threshold=0.25)
-    postprocess_workspace = td.create_postprocess(device, image_size, td.BayerPattern.RGGB, color_smoothing_passes=5, green_eq_local=True, green_eq_global=True, green_eq_threshold=settings.postprocess_green_eq_threshold)
-    wiener_workspace = td.create_wiener(device, image_size)
 
     def compute_rgb() -> np.ndarray:
-        # Use torch_darktable linear debayer
-        if settings.debayer == 'bilinear':
-            rgb_raw = td.bilinear5x5_demosaic(bayer_image.unsqueeze(-1), td.BayerPattern.RGGB)
-        elif settings.debayer == 'rcd':
-            rgb_raw = rcd_workspace.process(bayer_image.unsqueeze(-1))
-        elif settings.debayer == 'ppg':
-            rgb_raw = ppg_workspace.process(bayer_image.unsqueeze(-1))
-        else:
-            assert False, f"Invalid debayer method: {settings.debayer}"
-
-        if settings.use_postprocess:
-            rgb_raw = postprocess_workspace.process(rgb_raw)
-
-        if settings.use_wiener:
-            rgb_raw = wiener_workspace.process_log(rgb_raw, settings.wiener_sigma)
-            
-
-        if settings.use_bilateral:
-            rgb_raw = td.bilateral_rgb(
-                bil_workspace,
-                rgb_raw,
-                detail=settings.bilateral_detail,
-            )
-
-        # Apply saturation adjustment before tonemapping (if needed)  
-        if settings.saturation != 0.0:
-            rgb_raw = td.modify_saturation(rgb_raw, settings.saturation)
-
-        # Compute metrics once
-        metrics = td.Reinhard.compute_metrics(rgb_raw, stride=4, min_gray=1e-2)
-        params = settings.tonemap
-
-        if settings.tonemap_method == 'reinhard':
-            rgb_tm = td.Reinhard.tonemap(
-                rgb_raw, metrics, params)
-        elif settings.tonemap_method == 'linear':
-            rgb_tm = td.linear_tonemap(
-                rgb_raw, metrics, params)
-        elif settings.tonemap_method == 'aces':
-            rgb_tm = td.aces_tonemap(rgb_raw, metrics, params)
-
-        else:
-          assert False, f"Invalid tonemap method: {settings.tonemap_method}"
-
-        return rgb_tm.cpu().numpy()
+        return pipeline.process(bayer_image, wb)
 
     rgb_np = compute_rgb()
 
-    fig, ax = plt.subplots(figsize=(10, 6))
-    plt.subplots_adjust(left=0.01, right=0.99, top=0.99, bottom=0.30)
+    fig, ax = plt.subplots(figsize=(12, 8))
+    plt.subplots_adjust(left=0.25, right=0.99, top=0.99, bottom=0.01)
     im = ax.imshow(rgb_np, interpolation='nearest')
     ax.set_aspect('equal', adjustable='box')
     ax.set_axis_off()
 
-    # Left column: radio + compact checkboxes
-    ax_debayer = plt.axes((0.05, 0.205, 0.14, 0.1))
+    # Left sidebar controls
+    sidebar_x = 0.02
+    sidebar_w = 0.20
+    
+    # Presets at top
+    ax_presets = plt.axes((sidebar_x, 0.9, sidebar_w, 0.08))
+    available_presets = list(ImagePipeline.presets.keys())
+    rb_presets = RadioButtons(ax_presets, available_presets, active=available_presets.index(current_preset))
+    
+    # Debayer method
+    ax_debayer = plt.axes((sidebar_x, 0.8, sidebar_w, 0.08))
     rb = RadioButtons(ax_debayer, ('bilinear', 'rcd', 'ppg'), active=('bilinear', 'rcd', 'ppg').index(settings.debayer))
 
-
-    ax_checks = plt.axes((0.05, 0.09, 0.14, 0.1))
-    cb = CheckButtons(
-        ax_checks,
-        ('postprocess', 'wiener', 'bilateral'),
-        (settings.use_postprocess, settings.use_wiener, settings.use_bilateral)
-    )
-
-    # Tonemap method radio
-    ax_tonemap = plt.axes((0.05, 0.015, 0.14, 0.06))
+    # Tonemap method
+    ax_tonemap = plt.axes((sidebar_x, 0.7, sidebar_w, 0.08))
     rb_tm = RadioButtons(
         ax_tonemap,
         ('reinhard', 'aces', 'linear'),
         active=('reinhard', 'aces', 'linear').index(settings.tonemap_method),
     )
 
-    # Right column: create axes first, then sliders
-    def create_axes_vertical(n:int, x:float=0.30, w:float=0.65, h:float=0.03,
-                             y_top:float=0.265, y_bottom:float=0.055):
+    # Checkboxes
+    checkbox_labels = ('postprocess', 'wiener', 'bilateral', 'white_balance')
+    ax_checks = plt.axes((sidebar_x, 0.6, sidebar_w, 0.08))
+    cb = CheckButtons(
+        ax_checks,
+        checkbox_labels,
+        (settings.use_postprocess, settings.use_wiener, settings.use_bilateral, settings.use_white_balance)
+    )
+    # Sliders in sidebar - tightly packed
+    def create_axes_vertical(n:int, x:float=sidebar_x+0.06, w:float=sidebar_w-0.07, h:float=0.015,
+                             y_top:float=0.55, y_bottom:float=0.35):
         axes = []
         if n <= 0:
             return axes
@@ -164,136 +97,112 @@ def interactive_debayer(bayer_image: torch.Tensor, input_path: Path) -> None:
             axes.append(plt.axes((x, y, w, h)))
         return axes
 
-    ax_gamma, ax_light, ax_detail, ax_sigma, ax_sigma_r, ax_wiener_sigma, ax_ppg_med, ax_postprocess_thresh, ax_intensity, ax_saturation = create_axes_vertical(10)
+    ax_gamma, ax_light, ax_detail, ax_wiener_sigma, ax_intensity, ax_vibrance = create_axes_vertical(6)
 
     # Tonemap group
-    s_gamma = Slider(ax_gamma, 'gamma', 0.1, 3.0, valinit=settings.tonemap.gamma)
-    s_light = Slider(ax_light, 'light_adapt', 0.0, 1.0, valinit=settings.tonemap.light_adapt)
+    gamma = Slider(ax_gamma, 'gamma', 0.1, 3.0, valinit=settings.tonemap.gamma)
+    light = Slider(ax_light, 'light_adapt', 0.0, 1.0, valinit=settings.tonemap.light_adapt)
     
     # Bilateral group
-    s_detail = Slider(ax_detail, 'bil_detail', 0.0, 2.0, valinit=settings.bilateral_detail)
-    s_sigma = Slider(ax_sigma, 'bil_sigma_s', 1.0, 16.0, valinit=settings.bilateral_sigma_s)
-    s_sigma_r = Slider(ax_sigma_r, 'bil_sigma_r', 0.01, 0.5, valinit=settings.bilateral_sigma_r)
+    detail = Slider(ax_detail, 'bil_detail', 0.0, 2.0, valinit=settings.bilateral_detail)
     
     # Wiener group
-    s_wiener_sigma = Slider(ax_wiener_sigma, 'wiener_sigma', 0.001, 0.5, valinit=settings.wiener_sigma)
-    
-    # PPG group
-    s_ppg_med = Slider(ax_ppg_med, 'ppg_median', 0.0, 1.0, valinit=settings.ppg_median_threshold)
-    
-    # Postprocess group
-    s_postprocess_thresh = Slider(ax_postprocess_thresh, 'postproc_thresh', 0.001, 0.1, valinit=settings.postprocess_green_eq_threshold)
+    wiener = Slider(ax_wiener_sigma, 'wiener_sigma', 0.001, 0.5, valinit=settings.wiener_sigma)
     
     # Color adjustment group
-    s_saturation = Slider(ax_saturation, 'saturation', -1.0, 1.0, valinit=settings.saturation)
-    s_intensity = Slider(ax_intensity, 'intensity', -1.0, 3.0, valinit=settings.tonemap.intensity)
+    vibrance = Slider(ax_vibrance, 'vibrance', -1.0, 1.0, valinit=settings.vibrance)
+    intensity = Slider(ax_intensity, 'intensity', -1.0, 3.0, valinit=settings.tonemap.intensity)
     
-    # Save button
-    ax_save = plt.axes((0.22, 0.015, 0.06, 0.04))
+    # Save button at bottom of sidebar
+    ax_save = plt.axes((sidebar_x, 0.02, sidebar_w, 0.06))
     btn_save = Button(ax_save, 'Save JPEG')
 
     ax_detail.set_zorder(10)
-    ax_sigma.set_zorder(10)
-    ax_sigma_r.set_zorder(10)
     ax_wiener_sigma.set_zorder(10)
-    ax_postprocess_thresh.set_zorder(10)
 
-    def update_display():
+    # Parameter handling abstraction
+    def field(name):
+        return (
+            lambda s: getattr(s, name),
+            lambda s, val: replace(s, **{name: val})
+        )
+
+    def nested(outer, inner):
+        return (
+            lambda s: getattr(getattr(s, outer), inner),
+            lambda s, val: replace(s, **{outer: replace(getattr(s, outer), **{inner: val})})
+        )
+
+    def make_param_handler(getter, setter):
+        def handler(val):
+            nonlocal settings
+            settings = setter(settings, float(val))
+            update_display()
+        return handler
+
+    def sync_ui_from_settings(settings_obj):
+        for slider, (getter, _) in param_mappings.items():
+            slider.set_val(getter(settings_obj))
+        
+        # Update radio buttons
+        rb.set_active(('bilinear', 'rcd', 'ppg').index(settings_obj.debayer))
+        rb_tm.set_active(('reinhard', 'aces', 'linear').index(settings_obj.tonemap_method))
+        
+        # Update checkboxes
+        cb.set_active(0, settings_obj.use_postprocess)
+        cb.set_active(1, settings_obj.use_wiener)
+        cb.set_active(2, settings_obj.use_bilateral)
+        cb.set_active(3, settings_obj.use_white_balance)
+
+    # Parameter mappings
+    param_mappings = {
+        gamma: nested('tonemap', 'gamma'),
+        light: nested('tonemap', 'light_adapt'),
+        intensity: nested('tonemap', 'intensity'),
+        detail: field('bilateral_detail'),
+        wiener: field('wiener_sigma'),
+        vibrance: field('vibrance'),
+    }
+
+    def update_display(**kwargs):
+        nonlocal pipeline, settings
+        if kwargs:
+            settings = replace(settings, **kwargs)
+        pipeline = ImagePipeline(device, camera_settings, settings)
         new_img = compute_rgb()
         im.set_data(new_img)
         fig.canvas.draw_idle()
       
-    def on_rb(label):
-        settings.debayer = label  # type: ignore[assignment]
-        set_ppg_enabled(settings.debayer == 'ppg')
+    def on_presets(label):
+        nonlocal settings, current_preset
+        current_preset = label
+        settings = ImagePipeline.presets[label]
+        
+        sync_ui_from_settings(settings)
+        
         update_display()
+      
+    def on_rb(label):
+        update_display(debayer=label)  # type: ignore[arg-type]
 
-    def set_detail_enabled(enabled: bool):
-        s_detail.set_active(enabled)
-        ax_detail.patch.set_alpha(1.0 if enabled else 0.3)
-
-    def set_wiener_enabled(enabled: bool):
-        s_wiener_sigma.set_active(enabled)
-        ax_wiener_sigma.patch.set_alpha(1.0 if enabled else 0.3)
-
-    def update_sigma_enabled():
-        enabled = settings.use_bilateral
-        s_sigma.set_active(enabled)
-        s_sigma_r.set_active(enabled)
-        ax_sigma.patch.set_alpha(1.0 if enabled else 0.3)
-        ax_sigma_r.patch.set_alpha(1.0 if enabled else 0.3)
-
-    def set_bilateral_enabled(enabled: bool):
-        set_detail_enabled(enabled)
-        update_sigma_enabled()
 
     def on_cb(label):
+        # Get current checkbox state (after the click)
+        idx = checkbox_labels.index(label)
+        is_checked = cb.get_status()[idx]
+        
         if label == 'postprocess':
-            settings.use_postprocess = not settings.use_postprocess
-            set_postprocess_enabled(settings.use_postprocess)
+            update_display(use_postprocess=is_checked)
         elif label == 'wiener':
-            settings.use_wiener = not settings.use_wiener
-            set_wiener_enabled(settings.use_wiener)
+            update_display(use_wiener=is_checked)
         elif label == 'bilateral':
-            settings.use_bilateral = not settings.use_bilateral
-            set_bilateral_enabled(settings.use_bilateral)
-        update_display()
+            update_display(use_bilateral=is_checked)
+        elif label == 'white_balance':
+            update_display(use_white_balance=is_checked)
 
     def on_rb_tm(label):
-        settings.tonemap_method = label  # type: ignore[assignment]
-        update_display()
+        update_display(tonemap_method=label)  # type: ignore[arg-type]
 
-    def on_gamma(val):
-        settings.tonemap.gamma = float(val)
-        update_display()
-
-    def on_saturation(val):
-        settings.saturation = float(val)
-        update_display()
-    
-    def on_intensity(val):
-        settings.tonemap.intensity = float(val)
-        update_display()
-
-    def on_detail(val):
-        settings.bilateral_detail = float(val)
-        update_display()
-
-    def on_wiener_sigma(val):
-        settings.wiener_sigma = float(val)
-        update_display()
-
-    def on_sigma(val):
-        settings.bilateral_sigma_s = float(val)
-        update_display()
-
-    def on_light(val):
-        settings.tonemap.light_adapt = float(val)
-        update_display()
-
-    def on_sigma_r(val):
-        settings.bilateral_sigma_r = float(val)
-        update_display()
-
-    def set_ppg_enabled(enabled: bool):
-        s_ppg_med.set_active(enabled)
-        ax_ppg_med.patch.set_alpha(1.0 if enabled else 0.3)
-
-    def set_postprocess_enabled(enabled: bool):
-        s_postprocess_thresh.set_active(enabled)
-        ax_postprocess_thresh.patch.set_alpha(1.0 if enabled else 0.3)
-
-    def on_ppg_median(val):
-        nonlocal ppg_workspace
-        settings.ppg_median_threshold = float(val)
-        ppg_workspace.median_threshold = settings.ppg_median_threshold
-        update_display()
-    
-    def on_postprocess_thresh(val):
-        nonlocal postprocess_workspace
-        settings.postprocess_green_eq_threshold = float(val)
-        postprocess_workspace.green_eq_threshold = settings.postprocess_green_eq_threshold
-        update_display()
     
     def on_save_jpeg(event):
         # Get current processed image
@@ -310,26 +219,15 @@ def interactive_debayer(bayer_image: torch.Tensor, input_path: Path) -> None:
         pil_image.save(output_path, 'JPEG', quality=95)
         print(f"Saved JPEG to: {output_path}")
 
+    # Auto-register parameter handlers
+    for slider, (getter, setter) in param_mappings.items():
+        slider.on_changed(make_param_handler(getter, setter))
+
+    rb_presets.on_clicked(on_presets)
     rb.on_clicked(on_rb)
     rb_tm.on_clicked(on_rb_tm)
     cb.on_clicked(on_cb)
-    s_gamma.on_changed(on_gamma)
-    s_detail.on_changed(on_detail)
-    s_wiener_sigma.on_changed(on_wiener_sigma)
-    s_sigma.on_changed(on_sigma)
-    s_light.on_changed(on_light)
-    s_sigma_r.on_changed(on_sigma_r)
-    s_ppg_med.on_changed(on_ppg_median)
-    s_postprocess_thresh.on_changed(on_postprocess_thresh)
-    s_saturation.on_changed(on_saturation)
-    s_intensity.on_changed(on_intensity)
     btn_save.on_clicked(on_save_jpeg)
-
-    set_bilateral_enabled(settings.use_bilateral)
-    set_wiener_enabled(settings.use_wiener)
-    set_postprocess_enabled(settings.use_postprocess)
-    update_sigma_enabled()
-    set_ppg_enabled(settings.debayer == 'ppg')
 
     plt.show()
 
@@ -337,10 +235,18 @@ def interactive_debayer(bayer_image: torch.Tensor, input_path: Path) -> None:
 def main():
     args = parse_args()
     set_seed(args.seed)
-    assert os.path.exists(args.input), f"Error: Input file {args.input} does not exist"
+    assert args.input.exists(), f"Error: Input file {args.input} does not exist"
 
-    bayer_image = load_raw_image(args.input, args.camera) 
-    interactive_debayer(bayer_image, args.input)
+    # Get camera settings explicitly
+    if args.camera:
+        if args.camera not in camera_settings:
+            raise ValueError(f"Unknown camera: {args.camera}. Available cameras: {list(camera_settings.keys())}")
+        cam_settings = camera_settings[args.camera]
+    else:
+        cam_settings = settings_for_file(args.input)
+
+    bayer_image = load_raw_image(args.input, cam_settings) 
+    interactive_debayer(bayer_image, args.input, cam_settings)
 
 
 if __name__ == "__main__":

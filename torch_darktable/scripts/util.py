@@ -1,5 +1,6 @@
 
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 import torch
 from beartype import beartype
@@ -7,19 +8,66 @@ import torch_darktable as td
 import numpy as np
 import cv2
 
+
+class ImageTransform(Enum):
+  none = 'none'
+  rotate_90 = 'rotate_90'
+  rotate_180 = 'rotate_180'
+  rotate_270 = 'rotate_270'
+  transpose = 'transpose'
+  flip_horiz = 'flip_horiz'
+  flip_vert = 'flip_vert'
+  transverse = 'transverse'
+
+
 @beartype
 @dataclass
 class CameraSettings:
     name: str
     image_size: tuple[int, int]
     ids_format: bool = False
+    bayer_pattern: td.BayerPattern = td.BayerPattern.RGGB
     white_balance: tuple[float, float, float] = (1.0, 1.0, 1.0)
     brightness: float = 1.0
     padding: int = 0
+    transform: ImageTransform = ImageTransform.none
+    preset: str = 'default'
 
     @property
     def bytes(self) -> int:
         return (self.image_size[0] * self.image_size[1] * 3 // 2) + self.padding
+
+
+
+
+
+@beartype
+def transformed_size(original_size: tuple[int, int], transform: ImageTransform) -> tuple[int, int]:
+  if transform in [ImageTransform.rotate_90, ImageTransform.rotate_270, ImageTransform.transpose]:
+    return (original_size[1], original_size[0])  # swap width/height
+  else:
+    return original_size
+
+
+def transform(image:torch.Tensor, transform:ImageTransform):
+  if transform == ImageTransform.none:
+    return image
+  elif transform == ImageTransform.rotate_90:
+    return torch.rot90(image, 1, (0, 1)).contiguous()
+  elif transform == ImageTransform.rotate_180:
+    return torch.rot90(image, 2, (0, 1)).contiguous()
+  elif transform == ImageTransform.rotate_270:
+    return torch.rot90(image, 3, (0, 1)).contiguous()
+  elif transform == ImageTransform.flip_horiz:
+    return torch.flip(image, (1,)).contiguous()
+  elif transform == ImageTransform.flip_vert:
+    return torch.flip(image, (0,)).contiguous() 
+  elif transform == ImageTransform.transverse:
+    return torch.flip(image, (0, 1)).contiguous()
+  elif transform == ImageTransform.transpose:
+    return torch.transpose(image, 0, 1).contiguous()
+
+
 
 
 @beartype
@@ -53,6 +101,7 @@ camera_settings = dict(
       ids_format=False, 
       white_balance=(1.0, 1.0, 1.0), 
       brightness=0.8,
+      transform=ImageTransform.rotate_270,
     ),
     ids=CameraSettings(
       name='ids',
@@ -60,13 +109,15 @@ camera_settings = dict(
       ids_format=True, 
       white_balance=(1.5, 1.0, 1.5), 
       brightness=1.0,
+      transform=ImageTransform.rotate_90,
     ),
     pfr=CameraSettings(
       name='pfr',
       image_size=(4112, 3008), 
       white_balance=(1.0, 1.0, 1.0), 
       brightness=1.0,
-      padding=1536
+      padding=1536,
+      transform=ImageTransform.rotate_90,
     )
 )
 

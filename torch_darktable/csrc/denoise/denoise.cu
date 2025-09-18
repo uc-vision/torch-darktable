@@ -172,6 +172,8 @@ __device__ __forceinline__ Complex apply_gain(Complex value, float sigma) {
   return gain * value;
 }
 
+
+
 // Main kernel: orchestrates the Wiener filtering pipeline
 template<int K, int C>
 __global__ void wiener_tile_kernel(
@@ -195,6 +197,8 @@ __global__ void wiener_tile_kernel(
     #pragma unroll
     for (int i = 0; i < C; i++) {
       auto complex = FFT<K>::fft_2d(Complex(pixel_type<C>::get(value, i), 0.0f));
+
+      
       complex = apply_gain(complex, pixel_type<C>::get(noise_sigmas, i));
       pixel_type<C>::set(value, i, FFT<K>::ifft_2d(complex).re);
     }

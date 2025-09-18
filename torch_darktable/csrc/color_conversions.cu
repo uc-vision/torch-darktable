@@ -55,10 +55,19 @@ struct ConvertWithMatrix3x3 {
     }
 };
 
-struct AdjustSaturation {
-    float adjustment;
+struct AdjustHSL {
+    float hue_adjust;
+    float sat_adjust;
+    float lum_adjust;
     __device__ float3 operator()(float3 rgb) const {
-        return modify_rgb_saturation(rgb, adjustment);
+        return modify_rgb_hsl(rgb, hue_adjust, sat_adjust, lum_adjust);
+    }
+};
+
+struct AdjustVibrance {
+    float amount;
+    __device__ float3 operator()(float3 rgb) const {
+        return modify_rgb_vibrance_dt(rgb, amount);
     }
 };
 
@@ -131,8 +140,12 @@ torch::Tensor lab_to_rgb(const torch::Tensor& lab) {
 }
 
 
-torch::Tensor modify_saturation(const torch::Tensor& rgb, float adjustment) {
-    return convert_color(rgb, AdjustSaturation{adjustment}, "adjust_saturation");
+torch::Tensor modify_hsl(const torch::Tensor& rgb, float hue_adjust, float sat_adjust, float lum_adjust) {
+    return convert_color(rgb, AdjustHSL{hue_adjust, sat_adjust, lum_adjust}, "adjust_hsl");
+}
+
+torch::Tensor modify_vibrance(const torch::Tensor& rgb, float amount) {
+    return convert_color(rgb, AdjustVibrance{amount}, "adjust_vibrance");
 }
 
 
@@ -154,7 +167,7 @@ torch::Tensor color_transform_3x3(const torch::Tensor& input, const torch::Tenso
 // Converter structs for channel extraction
 struct ExtractLuminance {
     __device__ float operator()(float3 input) const {
-        return rgb_to_lab_l(clamp01(input));
+        return rgb_to_lab_l(clipf(input));
     }
 };
 
@@ -164,7 +177,7 @@ struct ExtractLogLuminance {
     __device__ ExtractLogLuminance(float epsilon = 1e-6f) : eps(epsilon) {}
     
     __device__ float operator()(float3 input) const {
-        float lum = rgb_to_lab_l(clamp01(input));
+        float lum = rgb_to_lab_l(clipf(input));
         return logf(fmaxf(eps, lum));
     }
 };

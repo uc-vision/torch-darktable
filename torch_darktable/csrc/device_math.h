@@ -33,6 +33,12 @@ __device__ __forceinline__ float clipf(float x) {
     return fminf(fmaxf(x, 0.0f), 1.0f);
 }
 
+
+__device__ __forceinline__ float3 clipf(float3 x) {
+    return make_float3(clipf(x.x), clipf(x.y), clipf(x.z));
+}
+
+
 // Clamp float to [lo, hi]
 __device__ __forceinline__ float clampf(float v, float lo, float hi) {
     return fminf(fmaxf(v, lo), hi);
@@ -250,10 +256,6 @@ __device__ __forceinline__ float3 clamp(const float3& v, float lo, float hi) {
     );
 }
 
-// Normalized clamp to [0,1] - very common for color values
-__device__ __forceinline__ float3 clamp01(const float3& v) {
-    return clamp(v, 0.0f, 1.0f);
-}
 
 // Load/store float3 from/to arrays
 __device__ __forceinline__ float3 float3_load(const float* input, int idx) {

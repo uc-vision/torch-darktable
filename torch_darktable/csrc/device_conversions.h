@@ -88,19 +88,21 @@ __device__ float3 xyz_to_lab(float3 xyz) {
     
     float3 f_xyz = lab_f(xyz);
     
-    float L = 116.0f * f_xyz.y - 16.0f;
-    float a = 500.0f * (f_xyz.x - f_xyz.y);
-    float b = 200.0f * (f_xyz.y - f_xyz.z);
+    // Use pre-scaled constants for normalized LAB output
+    float L = (116.0f/100.0f) * f_xyz.y - (16.0f/100.0f);     // L: 0-1
+    float a = (500.0f/128.0f) * (f_xyz.x - f_xyz.y);          // A: -1 to +1  
+    float b = (200.0f/128.0f) * (f_xyz.y - f_xyz.z);          // B: -1 to +1
     
     return make_float3(L, a, b);
 }
 
 __device__ float3 lab_to_xyz(float3 lab) {
-    float fy = (lab.x + 16.0f) / 116.0f;
+    // Use pre-scaled constants for normalized LAB input
+    float fy = lab.x * (100.0f/116.0f) + (16.0f/116.0f);
     float3 f_xyz = make_float3(
-        lab.y / 500.0f + fy,
+        lab.y * (128.0f/500.0f) + fy,
         fy,
-        fy - lab.z / 200.0f
+        fy - lab.z * (128.0f/200.0f)
     );
     
     float3 xyz = lab_f_inv(f_xyz);
@@ -138,6 +140,60 @@ __device__ float3 lab_to_rgb(float3 lab) {
     return xyz_to_rgb(lab_to_xyz(lab));
 }
 
+// HSL color space conversions
+__device__ float3 rgb_to_hsl(float3 rgb) {
+    float max_val = fmaxf(fmaxf(rgb.x, rgb.y), rgb.z);
+    float min_val = fminf(fminf(rgb.x, rgb.y), rgb.z);
+    float delta = max_val - min_val;
+    
+    float h = 0.0f;
+    float s = 0.0f;
+    float l = (max_val + min_val) * 0.5f;
+    
+    if (delta > 1e-6f) {
+        s = (l < 0.5f) ? delta / (max_val + min_val) : delta / (2.0f - max_val - min_val);
+        
+        if (max_val == rgb.x) {
+            h = (rgb.y - rgb.z) / delta + (rgb.y < rgb.z ? 6.0f : 0.0f);
+        } else if (max_val == rgb.y) {
+            h = (rgb.z - rgb.x) / delta + 2.0f;
+        } else {
+            h = (rgb.x - rgb.y) / delta + 4.0f;
+        }
+        h /= 6.0f;
+    }
+    
+    return make_float3(h, s, l);
+}
+
+__device__ float hsl_hue_to_rgb(float p, float q, float t) {
+    if (t < 0.0f) t += 1.0f;
+    if (t > 1.0f) t -= 1.0f;
+    if (t < 1.0f/6.0f) return p + (q - p) * 6.0f * t;
+    if (t < 1.0f/2.0f) return q;
+    if (t < 2.0f/3.0f) return p + (q - p) * (2.0f/3.0f - t) * 6.0f;
+    return p;
+}
+
+__device__ float3 hsl_to_rgb(float3 hsl) {
+    float h = hsl.x;
+    float s = hsl.y;
+    float l = hsl.z;
+    
+    if (s < 1e-6f) {
+        return make_float3(l, l, l);
+    }
+    
+    float q = (l < 0.5f) ? l * (1.0f + s) : l + s - l * s;
+    float p = 2.0f * l - q;
+    
+    float r = hsl_hue_to_rgb(p, q, h + 1.0f/3.0f);
+    float g = hsl_hue_to_rgb(p, q, h);
+    float b = hsl_hue_to_rgb(p, q, h - 1.0f/3.0f);
+    
+    return make_float3(r, g, b);
+}
+
 __device__ float rgb_to_lab_l(float3 rgb) {
     float3 linear_rgb = srgb_to_linear(rgb);
     
@@ -145,32 +201,61 @@ __device__ float rgb_to_lab_l(float3 rgb) {
     float y_xyz = 0.2126729f * linear_rgb.x + 0.7151522f * linear_rgb.y + 0.0721750f * linear_rgb.z;
     
     float fy = lab_f(y_xyz);
-    float L = 116.0f * fy - 16.0f;
+    float L = (116.0f/100.0f) * fy - (16.0f/100.0f);
     
-    return fmaxf(0.0f, L / 100.0f);
+    return fmaxf(0.0f, L);
 }
 
 __device__ float3 color_transform_3x3(float3 color, const float3x3& matrix) {
-    return clamp01(matrix * color);
+    return clipf(matrix * color);
 }
 
 __device__ float3 modify_rgb_luminance(float3 rgb, float luminance) {
     float3 lab = rgb_to_lab(rgb);
     float clamped = fmaxf(0.0f, fminf(1.0f, luminance));
-    float3 new_lab = make_float3(clamped * 100.0f, lab.y, lab.z);
-    return clamp01(lab_to_rgb(new_lab));
+    float3 new_lab = make_float3(clamped, lab.y, lab.z);  // L is now 0-1 range
+    return clipf(lab_to_rgb(new_lab));
 }
 
 __device__ float3 modify_rgb_log_luminance(float3 rgb, float log_luminance, float eps) {
     float3 lab = rgb_to_lab(rgb);
     float lum = fmaxf(0.0f, fminf(1.0f, expf(log_luminance)));
-    float3 new_lab = make_float3(lum * 100.0f, lab.y, lab.z);
-    return clamp01(lab_to_rgb(new_lab));
+    float3 new_lab = make_float3(lum, lab.y, lab.z);  // L is now 0-1 range
+    return clipf(lab_to_rgb(new_lab));
 }
 
-__device__ float3 modify_rgb_saturation(float3 rgb,  float adjust = 0.0f) {
+__device__ float3 modify_rgb_hsl(float3 rgb, float hue_adjust = 0.0f, float sat_adjust = 0.0f, float lum_adjust = 0.0f) {
+    float3 hsl = rgb_to_hsl(rgb);
+    
+    float new_h = hsl.x + hue_adjust;
+    if (new_h < 0.0f) new_h += 1.0f;
+    if (new_h > 1.0f) new_h -= 1.0f;
+    
+    float new_s = pow(hsl.y, 1.0f / (1.0f + sat_adjust));
+    float new_l = pow(hsl.z, 1.0f / (1.0f + lum_adjust));
+    
+    float3 new_hsl = make_float3(new_h, new_s, new_l);
+    return clipf(hsl_to_rgb(new_hsl));
+}
+
+// Darktable-style vibrance - perceptually superior to HSL saturation
+__device__ float3 modify_rgb_vibrance_dt(float3 rgb, float amount = 0.0f) {
     float3 lab = rgb_to_lab(rgb);
     
-    float3 new_lab = make_float3(lab.x, lab.y + adjust, lab.z + adjust);
-    return clamp01(lab_to_rgb(new_lab));
+    // Calculate chroma (colorfulness) in LAB space
+    // With normalized LAB (A,B in -1 to +1), chroma is already in reasonable range
+    const float chroma = sqrtf(lab.y * lab.y + lab.z * lab.z);
+    
+    // Darktable's vibrance algorithm:
+    // - More colorful areas get more enhancement
+    // - Lightness is slightly reduced as chroma increases (more natural)
+    const float ls = 1.0f - amount * chroma * 0.25f;  // lightness scaling
+    const float ss = 1.0f + amount * chroma;          // saturation scaling
+    
+    float new_l = lab.x * ls;
+    float new_a = lab.y * ss;
+    float new_b = lab.z * ss;
+    
+    float3 new_lab = make_float3(new_l, new_a, new_b);
+    return clipf(lab_to_rgb(new_lab));
 }

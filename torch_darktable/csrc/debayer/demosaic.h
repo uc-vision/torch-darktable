@@ -37,16 +37,6 @@ struct RCD {
     virtual float get_output_scale() const = 0;
 };
 
-// AMaZE demosaic interface
-struct AMaZE {
-    virtual ~AMaZE() = default;
-    virtual torch::Tensor process(const torch::Tensor& input) = 0;
-    virtual int get_width() const = 0;
-    virtual int get_height() const = 0;
-    // Parameters
-    virtual void set_clip_pt(float clip_pt) = 0;
-    virtual float get_clip_pt() const = 0;
-};
 
 // PostProcess interface
 struct PostProcess {
@@ -70,8 +60,6 @@ std::shared_ptr<PPG> create_ppg(torch::Device device, int width, int height,
 std::shared_ptr<RCD> create_rcd(torch::Device device, int width, int height, 
   BayerPattern pattern, float input_scale, float output_scale);
 
-std::shared_ptr<AMaZE> create_amaze(torch::Device device, int width, int height,
-  BayerPattern pattern, float clip_pt);
 
 std::shared_ptr<PostProcess> create_postprocess(torch::Device device, int width, int height,
   BayerPattern pattern, int color_smoothing_passes, bool green_eq_local, bool green_eq_global,

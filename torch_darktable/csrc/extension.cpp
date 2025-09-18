@@ -22,8 +22,6 @@ std::shared_ptr<PPG> create_ppg(torch::Device device, int width, int height,
 std::shared_ptr<RCD> create_rcd(torch::Device device, int width, int height, 
   BayerPattern pattern, float input_scale = 1.0f, float output_scale = 1.0f);
 
-std::shared_ptr<AMaZE> create_amaze(torch::Device device, int width, int height,
-  BayerPattern pattern, float clip_pt = 1.0f);
 
 std::shared_ptr<PostProcess> create_postprocess(torch::Device device,
   int width, int height, BayerPattern pattern,
@@ -72,13 +70,6 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         .def_property("input_scale", &RCD::get_input_scale, &RCD::set_input_scale, "Input scaling")
         .def_property("output_scale", &RCD::get_output_scale, &RCD::set_output_scale, "Output scaling");
 
-    py::class_<AMaZE, std::shared_ptr<AMaZE>>(m, "AMaZE")
-        .def(py::init(&create_amaze), "Create AMaZE demosaic",
-             py::arg("device"), py::arg("width"), py::arg("height"),
-             py::arg("pattern"), py::arg("clip_pt") = 1.0f)
-        .def("process", &AMaZE::process, "Process image with AMaZE algorithm",
-             py::arg("input"))
-        .def_property("clip_pt", &AMaZE::get_clip_pt, &AMaZE::set_clip_pt, "Clipping point for highlights");
 
     py::class_<PostProcess, std::shared_ptr<PostProcess>>(m, "PostProcess")
         .def(py::init(&create_postprocess), "Create post-process algorithm",
@@ -132,8 +123,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
           py::arg("rgb"), py::arg("eps"));
     m.def("modify_log_luminance", &modify_log_luminance, "Update RGB image with modified log luminance",
           py::arg("rgb"), py::arg("log_luminance"), py::arg("eps"));
-    m.def("modify_saturation", &modify_saturation, "Update RGB image with modified saturation",
-          py::arg("rgb"), py::arg("adjustment"));
+    m.def("modify_hsl", &modify_hsl, "Update RGB image with modified hue, saturation, and luminance",
+          py::arg("rgb"), py::arg("hue_adjust") = 0.0f, py::arg("sat_adjust") = 0.0f, py::arg("lum_adjust") = 0.0f);
+    m.def("modify_vibrance", &modify_vibrance, "Update RGB image with darktable-style vibrance adjustment",
+          py::arg("rgb"), py::arg("amount") = 0.0f);
 
 
     m.def("rgb_to_xyz", &rgb_to_xyz, "Convert RGB to XYZ color space",
