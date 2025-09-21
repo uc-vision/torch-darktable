@@ -419,3 +419,46 @@ __device__ __forceinline__ float4 operator*(float s, const float4& v) {
 __device__ __forceinline__ float4 operator-(float s, const float4& v) {
     return make_float4(s - v.x, s - v.y, s - v.z, s - v.w);
 }
+
+// Assignment operators for float3
+__device__ __forceinline__ float3& operator+=(float3& a, const float3& b) {
+    a.x += b.x;
+    a.y += b.y;
+    a.z += b.z;
+    return a;
+}
+
+__device__ __forceinline__ float3& operator-=(float3& a, const float3& b) {
+    a.x -= b.x;
+    a.y -= b.y;
+    a.z -= b.z;
+    return a;
+}
+
+__device__ __forceinline__ float3& operator*=(float3& a, const float3& b) {
+    a.x *= b.x;
+    a.y *= b.y;
+    a.z *= b.z;
+    return a;
+}
+
+__device__ __forceinline__ float3& operator/=(float3& a, const float3& b) {
+    a.x /= b.x;
+    a.y /= b.y;
+    a.z /= b.z;
+    return a;
+}
+
+__device__ __forceinline__ float3& operator+=(float3& a, float s) {
+    a.x += s;
+    a.y += s;
+    a.z += s;
+    return a;
+}
+
+__device__ __forceinline__ float3& operator*=(float3& a, float s) {
+    a.x *= s;
+    a.y *= s;
+    a.z *= s;
+    return a;
+}

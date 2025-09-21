@@ -22,6 +22,6 @@ test-bilateral = "torch_darktable.scripts.test_bilateral:main"
 test-wiener = "torch_darktable.scripts.test_wiener:main"
 test-denoise = "torch_darktable.scripts.test_wiener:main"
 run-benchmark = "torch_darktable.scripts.run_benchmark:main"
-process-raw = "torch_darktable.scripts.process_raw:main"
+process-raw = "torch_darktable.scripts.process_raw.main:main"
 
 

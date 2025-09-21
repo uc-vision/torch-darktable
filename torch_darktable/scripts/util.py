@@ -32,7 +32,7 @@ class CameraSettings:
   brightness: float = 1.0
   padding: int = 0
   transform: ImageTransform = ImageTransform.none
-  preset: str = 'default'
+  preset: str = 'reinhard'
 
   @property
   def bytes(self) -> int:

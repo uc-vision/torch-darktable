@@ -1,7 +1,7 @@
 """Image processing pipeline with configurable settings and presets."""
 
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import ClassVar, Literal
 
 from beartype import beartype
 import numpy as np
@@ -20,41 +20,48 @@ class Settings:
 
   debayer: Literal['bilinear', 'rcd', 'ppg'] = 'rcd'
   tonemap_method: Literal['reinhard', 'aces', 'linear'] = 'reinhard'
-  use_postprocess: bool = False
+  use_postprocess: bool = True
   use_bilateral: bool = False
-  use_wiener: bool = False
-  use_white_balance: bool = False
+  use_wiener: bool = True
+  use_white_balance: bool = True
 
-  bilateral_detail: float = 0.2
-  bilateral_sigma_s: float = 4.0
+  bilateral_detail: float = 0.4
+  bilateral_sigma_s: float = 2.0
   bilateral_sigma_r: float = 0.2
   ppg_median_threshold: float = 0.0
   postprocess_green_eq_threshold: float = 0.04
 
   tonemap: TonemapParameters = field(
-    default_factory=lambda: TonemapParameters(gamma=0.75, light_adapt=0.9, intensity=1.0)
+    default_factory=lambda: TonemapParameters(gamma=0.75, light_adapt=0.9, intensity=3.0)
   )
 
-  wiener_sigma: float = 0.1
+  wiener_sigma: float = 0.075
   vibrance: float = 0.0
+
+
 
 
 @beartype
 class ImagePipeline:
   """Image processing pipeline that can process images according to configurable settings."""
 
-  # Presets using Settings objects
-  presets = {
-    'default': Settings(wiener_sigma=0.1, use_wiener=True, use_bilateral=True),
+  presets: ClassVar[dict[str, Settings]] = {
+    'reinhard': Settings(),
+
     'aces': Settings(
       tonemap_method='aces',
-      tonemap=TonemapParameters(gamma=2.0, intensity=0.0),
-      vibrance=0.5,
+      tonemap=TonemapParameters(gamma=2.2, intensity=0.0),
       use_postprocess=True,
       use_wiener=True,
       use_bilateral=True,
+      vibrance=0.25,
     ),
-    'pfr_current': Settings(tonemap=TonemapParameters(gamma=1.0, intensity=0.0, light_adapt=1.0)),
+    'uc_current': Settings(debayer='bilinear', use_wiener=False, use_bilateral=False),
+    'pfr_current': Settings(
+      use_wiener=False,
+      use_bilateral=False,
+      use_postprocess=False,
+      tonemap=TonemapParameters(gamma=1.0, intensity=0.0, light_adapt=1.0)),
   }
 
   def __init__(self, device: torch.device, camera_settings: CameraSettings, settings: Settings):
@@ -110,7 +117,7 @@ class ImagePipeline:
       self.wiener_workspace = td.create_wiener(self.device, self.rgb_size)
 
   @beartype
-  def process(self, bayer_image: torch.Tensor, white_balance: torch.Tensor) -> np.ndarray:
+  def process(self, bayer_image: torch.Tensor, white_balance: torch.Tensor | None = None) -> np.ndarray:
     """Process a bayer image according to the pipeline settings.
 
     Args:
@@ -122,14 +129,16 @@ class ImagePipeline:
     """
     # Apply white balance to bayer image if enabled
     bayer_input = bayer_image
-    if self.settings.use_white_balance:
+    if self.settings.use_white_balance and white_balance is not None:
       bayer_input = td.apply_white_balance(
         bayer_image, white_balance / bayer_image.max(), self.camera_settings.bayer_pattern
       )
 
+
     # Debayer
     if self.settings.debayer == 'bilinear':
-      rgb_raw = td.bilinear5x5_demosaic(bayer_input.unsqueeze(-1), self.camera_settings.bayer_pattern)
+      log_raw = (bayer_input + 1e-4).log()
+      rgb_raw = td.bilinear5x5_demosaic(log_raw.unsqueeze(-1), self.camera_settings.bayer_pattern).exp()
     elif self.settings.debayer == 'rcd':
       rgb_raw = self.rcd_workspace.process(bayer_input.unsqueeze(-1))
     elif self.settings.debayer == 'ppg':

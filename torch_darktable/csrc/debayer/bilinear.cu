@@ -23,7 +23,7 @@ __device__ constexpr int2 offsets[13] = {
 };
 
 
-// Four per-pixel-type kernels (R, G1, B, G2), each with 13 taps and 3 channels (R,G,B)
+// Four per-pixel-type kernels (R, G1, G2, B), each with 13 taps and 3 channels (R,G,B)
 // Coefficients derived from taichi_image/bayer.py (symmetrical diamond weights)
 __device__ constexpr float3 diamond_kernels[4][13] = {
     // Type 0: R pixel -> (ident, g_rb, rb_br)
@@ -42,21 +42,21 @@ __device__ constexpr float3 diamond_kernels[4][13] = {
         { -2,  0, -2 }, {  8,  0,  0 }, { -2,  0, -2 },
         { -2,  0,  1 }
     },
-    // Type 2: B pixel -> (rb_br, g_rb, ident)
-    {
-        { -3, -2,  0 },
-        {  4,  0,  0 }, {  0,  4,  0 }, {  4,  0,  0 },
-        { -3, -2,  0 }, {  0,  4,  0 }, { 12,  8, 16 }, {  0,  4,  0 }, { -3, -2,  0 },
-        {  4,  0,  0 }, {  0,  4,  0 }, {  4,  0,  0 },
-        { -3, -2,  0 }
-    },
-    // Type 3: G2 pixel -> (r_g2, ident, b_g2=r_g1)
+    // Type 2: G2 pixel -> (r_g2, ident, b_g2=r_g1)
     {
         {  1,  0, -2 },
         { -2,  0, -2 }, {  0,  0,  8 }, { -2,  0, -2 },
         { -2,  0,  1 }, {  8,  0,  0 }, { 10, 16, 10 }, {  8,  0,  0 }, { -2,  0,  1 },
         { -2,  0, -2 }, {  0,  0,  8 }, { -2,  0, -2 },
         {  1,  0, -2 }
+    },
+    // Type 3: B pixel -> (rb_br, g_rb, ident)
+    {
+        { -3, -2,  0 },
+        {  4,  0,  0 }, {  0,  4,  0 }, {  4,  0,  0 },
+        { -3, -2,  0 }, {  0,  4,  0 }, { 12,  8, 16 }, {  0,  4,  0 }, { -3, -2,  0 },
+        {  4,  0,  0 }, {  0,  4,  0 }, {  4,  0,  0 },
+        { -3, -2,  0 }
     }
 };
 
@@ -90,8 +90,8 @@ __global__ void bilinear5x5(
           const float v = input[clamp(c.y, 0, height - 1) * width + clamp(c.x, 0, width - 1)];
 
           const float3 w = diamond_kernels[pixel_type][k];
-          acc_r = acc_r + w * v;
-          sum_r = sum_r + w;
+          acc_r += w * v;
+          sum_r += w;
       }
 
       output[p.y * width + p.x] = acc_r / sum_r;

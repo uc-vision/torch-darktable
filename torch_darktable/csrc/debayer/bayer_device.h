@@ -16,10 +16,10 @@ __device__ __forceinline__ int2 offset2x2(int C) {
 }
 
 
-__device__ constexpr int order_rggb[4] = {0, 1, 1, 2};
-__device__ constexpr int order_bggr[4] = {2, 3, 1, 0};
-__device__ constexpr int order_grbg[4] = {1, 0, 2, 3};
-__device__ constexpr int order_gbrg[4] = {3, 2, 0, 1};
+__device__ constexpr int order_rggb[4] = {0, 1, 2, 3};  // R, G1, G2, B
+__device__ constexpr int order_bggr[4] = {3, 1, 2, 0};  // B, G1, G2, R  
+__device__ constexpr int order_grbg[4] = {1, 0, 3, 2};  // G1, R, B, G2
+__device__ constexpr int order_gbrg[4] = {1, 3, 0, 2};  // G1, B, R, G2
 
 template<BayerPattern pattern>
 __device__ __forceinline__ constexpr int get_pixel_type(int C) {
