@@ -106,7 +106,7 @@ camera_settings = dict(
     name='ids',
     image_size=(2472, 2062),
     ids_format=True,
-    white_balance=(1.5, 1.0, 1.5),
+    white_balance=(1.7, 1.0, 2.1),
     brightness=1.0,
     transform=ImageTransform.rotate_90,
   ),

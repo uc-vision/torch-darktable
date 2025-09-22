@@ -6,6 +6,7 @@ from typing import ClassVar, Literal
 from beartype import beartype
 import numpy as np
 import torch
+import cv2
 
 import torch_darktable as td
 from torch_darktable.tonemap import TonemapParameters
@@ -18,7 +19,7 @@ from .util import CameraSettings, transform, transformed_size
 class Settings:
   """Image processing settings."""
 
-  debayer: Literal['bilinear', 'rcd', 'ppg'] = 'rcd'
+  debayer: Literal['bilinear', 'rcd', 'ppg', 'opencv'] = 'rcd'
   tonemap_method: Literal['reinhard', 'aces', 'linear'] = 'reinhard'
   use_postprocess: bool = True
   use_bilateral: bool = False
@@ -50,7 +51,7 @@ class ImagePipeline:
 
     'aces': Settings(
       tonemap_method='aces',
-      tonemap=TonemapParameters(gamma=2.2, intensity=0.0),
+      tonemap=TonemapParameters(gamma=1.5, intensity=1.0),
       use_postprocess=True,
       use_wiener=True,
       use_bilateral=True,
@@ -58,6 +59,7 @@ class ImagePipeline:
     ),
     'uc_current': Settings(debayer='bilinear', use_wiener=False, use_bilateral=False),
     'pfr_current': Settings(
+      debayer='opencv',
       use_wiener=False,
       use_bilateral=False,
       use_postprocess=False,
@@ -137,12 +139,15 @@ class ImagePipeline:
 
     # Debayer
     if self.settings.debayer == 'bilinear':
-      log_raw = (bayer_input + 1e-4).log()
-      rgb_raw = td.bilinear5x5_demosaic(log_raw.unsqueeze(-1), self.camera_settings.bayer_pattern).exp()
+      rgb_raw = td.bilinear5x5_demosaic(bayer_input.unsqueeze(-1), self.camera_settings.bayer_pattern)
     elif self.settings.debayer == 'rcd':
       rgb_raw = self.rcd_workspace.process(bayer_input.unsqueeze(-1))
     elif self.settings.debayer == 'ppg':
       rgb_raw = self.ppg_workspace.process(bayer_input.unsqueeze(-1))
+    elif self.settings.debayer == 'opencv':
+      np_input = (bayer_input * 65535.0).to(torch.uint16).cpu().numpy()
+      rgb_raw = cv2.cvtColor(np_input, cv2.COLOR_BAYER_RGGB2RGB)
+      rgb_raw = torch.from_numpy(rgb_raw).to(self.device).to(torch.float32) / 65535.0
     else:
       raise AssertionError(f'Invalid debayer method: {self.settings.debayer}')
 

@@ -1,12 +1,13 @@
 from dataclasses import replace
 from pathlib import Path
+from typing import get_args
 
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Button, CheckButtons, RadioButtons, Slider
 import numpy as np
 from PIL import Image
 
-from torch_darktable.scripts.pipeline import ImagePipeline
+from torch_darktable.scripts.pipeline import ImagePipeline, Settings
 from torch_darktable.scripts.util import load_raw_image
 
 
@@ -105,15 +106,17 @@ class ProcessRawUI:
 
     # Debayer method
     ax_debayer = plt.axes((sidebar_x, 0.74, sidebar_w, 0.06))
-    self.rb = RadioButtons(ax_debayer, ('bilinear', 'rcd', 'ppg'),
-                           active=('bilinear', 'rcd', 'ppg').index(self.settings.debayer))
+    debayer_options = get_args(Settings.__annotations__['debayer'])
+    self.rb = RadioButtons(ax_debayer, debayer_options,
+                           active=debayer_options.index(self.settings.debayer))
 
     # Tonemap method
     ax_tonemap = plt.axes((sidebar_x, 0.66, sidebar_w, 0.06))
+    tonemap_options = get_args(Settings.__annotations__['tonemap_method'])
     self.rb_tm = RadioButtons(
       ax_tonemap,
-      ('reinhard', 'aces', 'linear'),
-      active=('reinhard', 'aces', 'linear').index(self.settings.tonemap_method),
+      tonemap_options,
+      active=tonemap_options.index(self.settings.tonemap_method),
     )
 
     # Checkboxes (removed white_balance)
@@ -207,8 +210,10 @@ class ProcessRawUI:
       slider.set_val(getter(settings_obj))
 
     # Update radio buttons
-    self.rb.set_active(('bilinear', 'rcd', 'ppg').index(settings_obj.debayer))
-    self.rb_tm.set_active(('reinhard', 'aces', 'linear').index(settings_obj.tonemap_method))
+    debayer_options = get_args(Settings.__annotations__['debayer'])
+    self.rb.set_active(debayer_options.index(settings_obj.debayer))
+    tonemap_options = get_args(Settings.__annotations__['tonemap_method'])
+    self.rb_tm.set_active(tonemap_options.index(settings_obj.tonemap_method))
 
     # Update checkboxes (no white_balance)
     self.cb.set_active(0, settings_obj.use_postprocess)
