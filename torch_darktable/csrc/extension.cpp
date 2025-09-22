@@ -172,7 +172,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("compute_image_bounds", &compute_image_bounds, "Compute min/max bounds of images",
           py::arg("images"), py::arg("stride") = 8);
     m.def("compute_image_metrics", &compute_image_metrics, "Compute 9-vector image metrics for tone mapping",
-          py::arg("images"), py::arg("stride") = 8, py::arg("min_gray") = 1e-4f);
+          py::arg("images"), py::arg("stride") = 8, py::arg("min_gray") = 1e-4f, py::arg("rescale") = false);
     
     // Struct-based tonemap functions (only interface)
     m.def("reinhard_tonemap", &reinhard_tonemap, "Apply Reinhard tone mapping",

@@ -341,7 +341,9 @@ struct BilateralImpl : public Bilateral
     void ensure_detail_buffers(int sx, int sy, int sz)
     {
         auto opts = torch::TensorOptions().device(device_).dtype(torch::kFloat32);
-        if (!dev_grid.defined()) {
+        const std::vector<int64_t> required_shape = {sz, sy, sx};
+        
+        if (!dev_grid.defined() || dev_grid.sizes().vec() != required_shape) {
             dev_grid = torch::empty({sz, sy, sx}, opts);
             dev_grid_tmp = torch::empty({sz, sy, sx}, opts);
         }

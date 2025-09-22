@@ -168,15 +168,19 @@ torch::Tensor compute_image_bounds(const std::vector<torch::Tensor>& images, int
   return bounds;
 }
 
-torch::Tensor compute_image_metrics(const std::vector<torch::Tensor>& images, int stride, float min_gray) {
+torch::Tensor compute_image_metrics(const std::vector<torch::Tensor>& images, int stride, 
+    float min_gray, bool rescale) {
   TORCH_CHECK(!images.empty(), "images must be non-empty");
 
   auto opts = torch::TensorOptions().dtype(torch::kFloat32).device(images[0].device());
-  auto metrics = torch::tensor({FLT_MAX, -FLT_MAX, FLT_MAX, -FLT_MAX, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}, opts);
+  auto metrics = torch::tensor({0.0f, 1.0f, FLT_MAX, -FLT_MAX, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}, opts);
 
   int total_pixels = 0;
-  auto bounds = compute_image_bounds(images, stride);
-  metrics.slice(0, 0, 2) = bounds;
+  torch::Tensor bounds = torch::tensor({0.0f, 1.0f}, opts);
+  if (rescale) {
+    bounds = compute_image_bounds(images, stride);
+    metrics.slice(0, 0, 2) = bounds;
+  } 
 
   for (const auto& img : images) {
     int height = (int)img.size(0);

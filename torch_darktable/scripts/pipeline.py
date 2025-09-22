@@ -4,11 +4,12 @@ from dataclasses import dataclass, field
 from typing import ClassVar, Literal
 
 from beartype import beartype
+import cv2
 import numpy as np
 import torch
-import cv2
 
 import torch_darktable as td
+from torch_darktable.local_contrast import LaplacianParams
 from torch_darktable.tonemap import TonemapParameters
 
 from .util import CameraSettings, transform, transformed_size
@@ -21,12 +22,13 @@ class Settings:
 
   debayer: Literal['bilinear', 'rcd', 'ppg', 'opencv'] = 'rcd'
   tonemap_method: Literal['reinhard', 'aces', 'linear'] = 'reinhard'
-  use_postprocess: bool = True
+  use_postprocess: bool = False
   use_bilateral: bool = False
-  use_wiener: bool = True
-  use_white_balance: bool = True
+  use_wiener: bool = False
+  use_white_balance: bool = False
+  use_laplacian: bool = False
 
-  bilateral_detail: float = 0.4
+  bilateral_detail: float = 0.2
   bilateral_sigma_s: float = 2.0
   bilateral_sigma_r: float = 0.2
   ppg_median_threshold: float = 0.0
@@ -39,7 +41,10 @@ class Settings:
   wiener_sigma: float = 0.075
   vibrance: float = 0.0
 
-
+  laplacian_sigma: float = 0.2
+  laplacian_shadows: float = 1.0
+  laplacian_highlights: float = 1.0
+  laplacian_clarity: float = 0.2
 
 
 @beartype
@@ -47,7 +52,10 @@ class ImagePipeline:
   """Image processing pipeline that can process images according to configurable settings."""
 
   presets: ClassVar[dict[str, Settings]] = {
-    'reinhard': Settings(),
+    'reinhard': Settings(
+        use_bilateral=True,
+        use_postprocess=True,
+        use_wiener=True),
 
     'aces': Settings(
       tonemap_method='aces',
@@ -57,7 +65,11 @@ class ImagePipeline:
       use_bilateral=True,
       vibrance=0.25,
     ),
-    'uc_current': Settings(debayer='bilinear', use_wiener=False, use_bilateral=False),
+    'uc_current': Settings(
+        debayer='bilinear',
+        use_wiener=False,
+        use_bilateral=False),
+
     'pfr_current': Settings(
       debayer='opencv',
       use_wiener=False,
@@ -88,6 +100,7 @@ class ImagePipeline:
     self.ppg_workspace = None
     self.postprocess_workspace = None
     self.wiener_workspace = None
+    self.laplacian_workspace = None
 
     if settings.use_bilateral:
       self.bil_workspace = td.create_bilateral(
@@ -118,6 +131,15 @@ class ImagePipeline:
     if settings.use_wiener:
       self.wiener_workspace = td.create_wiener(self.device, self.rgb_size)
 
+    if settings.use_laplacian:
+      laplacian_params = LaplacianParams(
+        sigma=settings.laplacian_sigma,
+        shadows=settings.laplacian_shadows,
+        highlights=settings.laplacian_highlights,
+        clarity=settings.laplacian_clarity
+      )
+      self.laplacian_workspace = td.create_laplacian(self.device, self.rgb_size, laplacian_params)
+
   @beartype
   def process(self, bayer_image: torch.Tensor, white_balance: torch.Tensor | None = None) -> np.ndarray:
     """Process a bayer image according to the pipeline settings.
@@ -141,8 +163,10 @@ class ImagePipeline:
     if self.settings.debayer == 'bilinear':
       rgb_raw = td.bilinear5x5_demosaic(bayer_input.unsqueeze(-1), self.camera_settings.bayer_pattern)
     elif self.settings.debayer == 'rcd':
+      assert self.rcd_workspace is not None
       rgb_raw = self.rcd_workspace.process(bayer_input.unsqueeze(-1))
     elif self.settings.debayer == 'ppg':
+      assert self.ppg_workspace is not None
       rgb_raw = self.ppg_workspace.process(bayer_input.unsqueeze(-1))
     elif self.settings.debayer == 'opencv':
       np_input = (bayer_input * 65535.0).to(torch.uint16).cpu().numpy()
@@ -153,22 +177,29 @@ class ImagePipeline:
 
     # Postprocess
     if self.settings.use_postprocess:
+      assert self.postprocess_workspace is not None
       rgb_raw = self.postprocess_workspace.process(rgb_raw)
+
+    bounds = td.compute_image_bounds([rgb_raw], stride=4)
+    rgb_raw = (rgb_raw - bounds[0]) / (bounds[1] - bounds[0])
 
     # Apply camera transform after debayer
     rgb_raw = transform(rgb_raw, self.camera_settings.transform)
 
-    # Log luminance processing
-    log_luminance = td.compute_log_luminance(rgb_raw, eps=1e-4)
-
     if self.settings.use_wiener:
-      log_luminance = self.wiener_workspace.process(log_luminance.unsqueeze(2), self.settings.wiener_sigma).squeeze(2)
+      assert self.wiener_workspace is not None
+      rgb_raw = self.wiener_workspace.process_log_luminance(rgb_raw, self.settings.wiener_sigma)
 
-    rgb_raw = td.modify_log_luminance(rgb_raw, log_luminance, eps=1e-4)
 
     # Bilateral filtering
     if self.settings.use_bilateral:
+      assert self.bil_workspace is not None
       rgb_raw = td.bilateral_rgb(self.bil_workspace, rgb_raw, self.settings.bilateral_detail)
+
+    # Laplacian local contrast
+    if self.settings.use_laplacian:
+      assert self.laplacian_workspace is not None
+      rgb_raw = td.local_laplacian_rgb(self.laplacian_workspace, rgb_raw)
 
     # Compute metrics for tonemapping
     metrics = td.compute_image_metrics([rgb_raw], stride=4, min_gray=1e-4)

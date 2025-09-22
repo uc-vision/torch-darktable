@@ -36,7 +36,7 @@ def load_rgb_image(image_path: Path) -> torch.Tensor:
   if not image_path.exists():
     raise FileNotFoundError(f'Image not found: {image_path}')
 
-  img_array = cv2.imread(str(image_path), -1)  # -1 preserves bit depth
+  img_array = cv2.imread(str(image_path), cv2.IMREAD_COLOR)  # -1 preserves bit depth
 
   rgb_array = img_array.astype(np.float32)
   print(f'range: {np.min(rgb_array):.3f} - {np.max(rgb_array):.3f}')
@@ -65,7 +65,6 @@ def test_laplacian(image_path: Path, args):
     f'Parameters: gamma={params.num_gamma}, sigma={params.sigma}, shadows={params.shadows}, highlights={params.highlights}, clarity={params.clarity}'
   )
 
-  # Apply local Laplacian filter with RGB->LAB->RGB conversion
   print('Applying local Laplacian filter to RGB image...')
   result_rgb = local_laplacian_rgb(workspace, input_rgb)
 

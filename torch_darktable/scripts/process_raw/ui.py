@@ -41,14 +41,13 @@ class ProcessRawUI:
     # Store references for navigation updates
     self.bayer_image = bayer_image
     self.pipeline = ImagePipeline(device, camera_settings, self.settings)
-    
+
     # Navigation settings
     self.stride = 1  # How many images to skip when navigating
-    
     # Track modified presets - each preset can have user modifications
     # Initialize all presets with their defaults so switching always loads modified version
     self.modified_presets = {}
-    for preset_name in ImagePipeline.presets.keys():
+    for preset_name in ImagePipeline.presets:
       self.modified_presets[preset_name] = ImagePipeline.presets[preset_name]
 
     # UI components
@@ -120,12 +119,17 @@ class ProcessRawUI:
     )
 
     # Checkboxes (removed white_balance)
-    checkbox_labels = ('postprocess', 'wiener', 'bilateral')
-    ax_checks = plt.axes((sidebar_x, 0.58, sidebar_w, 0.06))
+    checkbox_labels = ('postprocess', 'wiener', 'bilateral', 'laplacian')
+    ax_checks = plt.axes((sidebar_x, 0.58, sidebar_w, 0.08))
     self.cb = CheckButtons(
       ax_checks,
       checkbox_labels,
-      (self.settings.use_postprocess, self.settings.use_wiener, self.settings.use_bilateral),
+      (
+        self.settings.use_postprocess,
+        self.settings.use_wiener,
+        self.settings.use_bilateral,
+        self.settings.use_laplacian,
+      ),
     )
     self.checkbox_labels = checkbox_labels
 
@@ -136,7 +140,7 @@ class ProcessRawUI:
       w: float = sidebar_w - 0.07,
       h: float = 0.015,
       y_top: float = 0.51,
-      y_bottom: float = 0.31,
+      y_bottom: float = 0.25,
     ):
       axes = []
       if n <= 0:
@@ -147,7 +151,11 @@ class ProcessRawUI:
         axes.append(plt.axes((x, y, w, h)))
       return axes
 
-    ax_gamma, ax_light, ax_detail, ax_wiener_sigma, ax_intensity, ax_vibrance = create_axes_vertical(6)
+    (
+      ax_gamma, ax_light, ax_detail, ax_bil_sigma_s, ax_bil_sigma_r,
+      ax_wiener_sigma, ax_intensity, ax_vibrance, ax_lap_shadows,
+      ax_lap_highlights, ax_lap_clarity
+    ) = create_axes_vertical(11)
 
     # Tonemap group
     self.gamma = Slider(ax_gamma, 'gamma', 0.1, 3.0, valinit=self.settings.tonemap.gamma)
@@ -155,22 +163,35 @@ class ProcessRawUI:
 
     # Bilateral group
     self.detail = Slider(ax_detail, 'bil_detail', 0.0, 2.0, valinit=self.settings.bilateral_detail)
+    self.bil_sigma_s = Slider(
+      ax_bil_sigma_s, 'bil_sigma_s', 0.1, 20.0, valinit=self.settings.bilateral_sigma_s
+    )
+    self.bil_sigma_r = Slider(
+      ax_bil_sigma_r, 'bil_sigma_r', 0.01, 1.0, valinit=self.settings.bilateral_sigma_r
+    )
 
     # Wiener group
     self.wiener = Slider(ax_wiener_sigma, 'wiener_sigma', 0.001, 0.5, valinit=self.settings.wiener_sigma)
 
     # Color adjustment group
     self.vibrance = Slider(ax_vibrance, 'vibrance', -1.0, 1.0, valinit=self.settings.vibrance)
-    self.intensity = Slider(ax_intensity, 'intensity', -1.0, 3.0, valinit=self.settings.tonemap.intensity)
+    self.intensity = Slider(ax_intensity, 'intensity', -1.0, 4.0, valinit=self.settings.tonemap.intensity)
+
+    # Laplacian group
+    self.lap_shadows = Slider(ax_lap_shadows, 'lap_shadows', -1.0, 3.0, valinit=self.settings.laplacian_shadows)
+    self.lap_highlights = Slider(
+      ax_lap_highlights, 'lap_highlights', -1.0, 3.0, valinit=self.settings.laplacian_highlights
+    )
+    self.lap_clarity = Slider(ax_lap_clarity, 'lap_clarity', -1.0, 1.0, valinit=self.settings.laplacian_clarity)
 
     # Save and reset buttons at bottom of sidebar
     button_w = sidebar_w / 2
     ax_save = plt.axes((sidebar_x, 0.02, button_w, 0.06))
     ax_reset = plt.axes((sidebar_x + button_w, 0.02, button_w, 0.06))
-    
+
     self.btn_save = Button(ax_save, 'Save JPEG')
     self.btn_reset = Button(ax_reset, 'Reset')
-    
+
     # Remove ticks from button axes
     ax_save.set_xticks([])
     ax_save.set_yticks([])
@@ -186,8 +207,13 @@ class ProcessRawUI:
       self.light: nested('tonemap', 'light_adapt'),
       self.intensity: nested('tonemap', 'intensity'),
       self.detail: field('bilateral_detail'),
+      self.bil_sigma_s: field('bilateral_sigma_s'),
+      self.bil_sigma_r: field('bilateral_sigma_r'),
       self.wiener: field('wiener_sigma'),
       self.vibrance: field('vibrance'),
+      self.lap_shadows: field('laplacian_shadows'),
+      self.lap_highlights: field('laplacian_highlights'),
+      self.lap_clarity: field('laplacian_clarity'),
     }
 
     self._setup_event_handlers()
@@ -219,6 +245,7 @@ class ProcessRawUI:
     self.cb.set_active(0, settings_obj.use_postprocess)
     self.cb.set_active(1, settings_obj.use_wiener)
     self.cb.set_active(2, settings_obj.use_bilateral)
+    self.cb.set_active(3, settings_obj.use_laplacian)
 
   def _update_display(self, **kwargs):
     """Update the image display."""
@@ -235,7 +262,6 @@ class ProcessRawUI:
     new_img = self.pipeline.process(self.bayer_image)
     self.im.set_data(new_img)
     # Don't call draw_idle() here - caller will handle it
-
 
   def _navigate_to_image(self, new_index):
     """Navigate to a specific image index."""
@@ -262,7 +288,7 @@ class ProcessRawUI:
       # Switch to this preset's modified version (always exists since we pre-initialize)
       self.current_preset = label
       self.settings = self.modified_presets[label]
-      
+
       # Update pipeline and UI
       self.pipeline = ImagePipeline(self.device, self.camera_settings, self.settings)
       self._sync_ui_from_settings(self.settings)
@@ -286,6 +312,8 @@ class ProcessRawUI:
         self._update_display(use_wiener=is_checked)
       elif label == 'bilateral':
         self._update_display(use_bilateral=is_checked)
+      elif label == 'laplacian':
+        self._update_display(use_laplacian=is_checked)
       # Update modified preset
       self.modified_presets[self.current_preset] = self.settings
 

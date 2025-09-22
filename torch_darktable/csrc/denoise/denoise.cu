@@ -6,10 +6,22 @@
 #include "window.h"
 #include "cuda_utils.h"
 
+#include <c10/cuda/CUDAStream.h>
+
 
 namespace {
 
 constexpr float eps = 1e-15f;
+
+// Fixed-size constant memory for noise sigmas (max 3 channels)
+__constant__ float noise_sigmas[3];
+
+// Helper to upload noise sigmas to constant memory
+template<int C>
+inline void upload_noise_sigmas(const torch::Tensor& noise_sigmas_tensor, cudaStream_t stream) {
+    CUDA_CHECK(cudaMemcpyToSymbolAsync(noise_sigmas, noise_sigmas_tensor.data_ptr<float>(), 
+                                      C * sizeof(float), 0, cudaMemcpyDeviceToDevice, stream));
+}
 
 template<int C>
 struct pixel_type;
@@ -181,8 +193,7 @@ __global__ void wiener_tile_kernel(
     pixel_t<C>* __restrict__ out,          // (C, H_pad, W_pad)  
     float* __restrict__ mask,         // (H_pad, W_pad)
     int H, int W, int H_pad, int W_pad,
-    int stride, int grid_h, int grid_w,
-    const pixel_t<C> noise_sigmas  // (C,)
+    int stride, int grid_h, int grid_w
 ) {
 
     int2 t = get_thread_pos();
@@ -199,7 +210,7 @@ __global__ void wiener_tile_kernel(
       auto complex = FFT<K>::fft_2d(Complex(pixel_type<C>::get(value, i), 0.0f));
 
       
-      complex = apply_gain(complex, pixel_type<C>::get(noise_sigmas, i));
+      complex = apply_gain(complex, noise_sigmas[i]);
       pixel_type<C>::set(value, i, FFT<K>::ifft_2d(complex).re);
     }
     
@@ -217,6 +228,7 @@ __global__ void normalize_and_crop_kernel(
 
     int H, int W, int H_pad, int W_pad
 ) {
+  
     int2 pos = make_int2(blockIdx.x * blockDim.x + threadIdx.x, 
                          blockIdx.y * blockDim.y + threadIdx.y);
     
@@ -243,7 +255,8 @@ public:
       const float interp_scale = 0.3f, const float fft_scale = 0.3f)
         : device_(device), overlap_factor_(overlap_factor) {
         
-        Window<K>::init(fft_scale, interp_scale);
+        auto stream = at::cuda::getCurrentCUDAStream(device.index());
+        Window<K>::init(fft_scale, interp_scale, stream);
     }
     
 private:
@@ -280,15 +293,17 @@ private:
         dim3 grid(grid_w, grid_h);
         dim3 block(K, K);  // KxK threads, each handles one pixel
 
-        pixel const noise_sigmas_val = pixel_type<C>::from_tensor(noise_sigmas);
+        auto stream = at::cuda::getCurrentCUDAStream(device_.index());
+        
+        // Upload noise sigmas to constant memory
+        upload_noise_sigmas<C>(noise_sigmas, stream);
        
-        wiener_tile_kernel<K, C><<<grid, block>>>(
+        wiener_tile_kernel<K, C><<<grid, block, 0, stream>>>(
             reinterpret_cast<pixel const*>(input.data_ptr<float>()),
             reinterpret_cast<pixel*>(padded_out.data_ptr<float>()),
             mask.data_ptr<float>(),
             H, W, h_pad, w_pad,
-            stride, grid_h, grid_w,
-            noise_sigmas_val
+            stride, grid_h, grid_w
         );
 
         
@@ -300,7 +315,7 @@ private:
         dim3 norm_grid(div_up(W, K), div_up(H, K));
         dim3 norm_block(K, K);
         
-        normalize_and_crop_kernel<K, C><<<norm_grid, norm_block>>>(
+        normalize_and_crop_kernel<K, C><<<norm_grid, norm_block, 0, stream>>>(
             reinterpret_cast<pixel const*>(padded_out.data_ptr<float>()),
             reinterpret_cast<pixel*>(final_out.data_ptr<float>()),
             mask.data_ptr<float>(),

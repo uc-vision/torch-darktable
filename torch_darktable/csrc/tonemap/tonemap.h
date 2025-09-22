@@ -15,7 +15,7 @@ struct TonemapParams {
 
 // Image metrics computation
 torch::Tensor compute_image_bounds(const std::vector<torch::Tensor>& images, int stride = 8);
-torch::Tensor compute_image_metrics(const std::vector<torch::Tensor>& images, int stride = 8, float min_gray = 1e-4f);
+torch::Tensor compute_image_metrics(const std::vector<torch::Tensor>& images, int stride = 8, float min_gray = 1e-4f, bool rescale = false);
 
 torch::Tensor reinhard_tonemap(
     const torch::Tensor& image, const torch::Tensor& metrics,

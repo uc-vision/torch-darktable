@@ -34,4 +34,5 @@ torch::Tensor compute_image_bounds(
 torch::Tensor compute_image_metrics(
     const std::vector<torch::Tensor>& images,
     int stride,
-    float min_gray);
+    float min_gray,
+    bool rescale);

@@ -3,6 +3,8 @@
 // Use outer product to get 2D window: window_2d[i][j] = window_1d[i] * window_1d[j]
 #pragma once
 #include <tuple>
+#include <torch/torch.h>
+#include "../cuda_utils.h"
 
 // 16x16 separable Gaussian windows
 __constant__ float window_fft_16[16];
@@ -12,49 +14,31 @@ __constant__ float window_interp_16[16];
 __constant__ float window_fft_32[32];
 __constant__ float window_interp_32[32];
 
-// Generic helper function to initialize Gaussian windows for any size K
+// Generic helper function to initialize Gaussian windows for any size K using PyTorch
 template<int K>
 inline void init_windows(const void* fft_symbol, const void* interp_symbol, 
-                                  float weight_fft = 0.3f, float weight_interp = 0.3f) {
-    float fft_vals[K];
-    float interp_vals[K];
-    
-    // Calculate Gaussian values using the formula
+                        float weight_fft = 0.3f, float weight_interp = 0.3f, 
+                        cudaStream_t stream = 0) {
     const float half = K / 2.0f;
     const float fft_scale = weight_fft * half * half;
     const float interp_scale = weight_interp * half * half;
     
-    // Compute sum of squares for normalization
-    float fft_sum_sq = 0.0f;
-    float interp_sum_sq = 0.0f;
+    // Create coordinate tensor: r from (-half + 0.5) to (half - 0.5) 
+    auto r = torch::linspace(-half + 0.5f, half - 0.5f, K, torch::dtype(torch::kFloat32).device(torch::kCUDA));
     
-    #pragma unroll
-    for (int i = 0; i < K; ++i) {
-        const float r = -half + 0.5f + i;
-        fft_vals[i] = expf(-(r * r) / fft_scale);
-        interp_vals[i] = expf(-(r * r) / interp_scale);
-        fft_sum_sq += fft_vals[i] * fft_vals[i];
-        interp_sum_sq += interp_vals[i] * interp_vals[i];
-    }
+    // Calculate Gaussian values
+    auto fft_vals = torch::exp(-(r * r) / fft_scale);
+    auto interp_vals = torch::exp(-(r * r) / interp_scale);
     
     // Normalize so sum of squares = 1
-    float fft_norm = 1.0f / sqrtf(fft_sum_sq);
-    float interp_norm = 1.0f / sqrtf(interp_sum_sq);
+    fft_vals = fft_vals / torch::norm(fft_vals);
+    interp_vals = interp_vals / torch::norm(interp_vals);
     
-    #pragma unroll
-    for (int i = 0; i < K; ++i) {
-        fft_vals[i] *= fft_norm;
-        interp_vals[i] *= interp_norm;
-    }
-    
-    // Copy to provided constant memory symbols
-    auto err1 = cudaMemcpyToSymbol(fft_symbol, fft_vals, K * sizeof(float));
-    auto err2 = cudaMemcpyToSymbol(interp_symbol, interp_vals, K * sizeof(float));
-    
-    if (err1 != cudaSuccess || err2 != cudaSuccess) {
-        throw std::runtime_error("Failed to copy " + std::to_string(K) + "x" + std::to_string(K) + 
-                                " windows to constant memory");
-    }
+    // Async copy to constant memory symbols
+    CUDA_CHECK(cudaMemcpyToSymbolAsync(fft_symbol, fft_vals.data_ptr<float>(), 
+                                       K * sizeof(float), 0, cudaMemcpyDeviceToDevice, stream));
+    CUDA_CHECK(cudaMemcpyToSymbolAsync(interp_symbol, interp_vals.data_ptr<float>(), 
+                                       K * sizeof(float), 0, cudaMemcpyDeviceToDevice, stream));
 }
 
 // Templated Window class
@@ -73,8 +57,8 @@ struct Window<16> {
     }
     
     
-    static inline void init(float weight_fft = 0.3f, float weight_interp = 0.3f) {
-        ::init_windows<16>(window_fft_16, window_interp_16, weight_fft, weight_interp);
+    static inline void init(float weight_fft = 0.3f, float weight_interp = 0.3f, cudaStream_t stream = 0) {
+        ::init_windows<16>(window_fft_16, window_interp_16, weight_fft, weight_interp, stream);
     }
 };
 
@@ -91,17 +75,17 @@ struct Window<32> {
     
     
     
-    static inline void init(float weight_fft = 0.3f, float weight_interp = 0.3f) {
-        ::init_windows<32>(window_fft_32, window_interp_32, weight_fft, weight_interp);
+    static inline void init(float weight_fft = 0.3f, float weight_interp = 0.3f, cudaStream_t stream = 0) {
+        ::init_windows<32>(window_fft_32, window_interp_32, weight_fft, weight_interp, stream);
     }
 };
 
 // Convenience functions
-inline void init_16(float weight_fft = 0.3f, float weight_interp = 0.3f) {
-    init_windows<16>(window_fft_16, window_interp_16, weight_fft, weight_interp);
+inline void init_16(float weight_fft = 0.3f, float weight_interp = 0.3f, cudaStream_t stream = 0) {
+    init_windows<16>(window_fft_16, window_interp_16, weight_fft, weight_interp, stream);
 }
 
-inline void init_32(float weight_fft = 0.3f, float weight_interp = 0.3f) {
-    init_windows<32>(window_fft_32, window_interp_32, weight_fft, weight_interp);
+inline void init_32(float weight_fft = 0.3f, float weight_interp = 0.3f, cudaStream_t stream = 0) {
+    init_windows<32>(window_fft_32, window_interp_32, weight_fft, weight_interp, stream);
 }
 

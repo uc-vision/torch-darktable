@@ -557,20 +557,22 @@ struct LaplacianImpl : public Laplacian
     {
         auto stream = c10::cuda::getCurrentCUDAStream();
         
+        // Initialize pointer arrays outside the loop
+        std::vector<int64_t> h_ptrs0(num_gamma), h_ptrs1(num_gamma);
+        
         for(int l=num_levels-2; l >= 0; l--) {
             const int pw = dl(bwidth, l);
             const int ph = dl(bheight, l);
             
-            // Fill pointer arrays on host
-            std::vector<int64_t> h_ptrs0(num_gamma), h_ptrs1(num_gamma);
+            // Fill pointer arrays with current level pointers
             for(int k = 0; k < num_gamma; k++) {
                 h_ptrs0[k] = reinterpret_cast<int64_t>(processed_ptr(l, k));
                 h_ptrs1[k] = reinterpret_cast<int64_t>(processed_ptr(l+1, k));
             }
             
-            // Copy directly to device symbols  
-            CUDA_CHECK(cudaMemcpyToSymbol(d_gamma_level0, h_ptrs0.data(), num_gamma * sizeof(half_t*)));
-            CUDA_CHECK(cudaMemcpyToSymbol(d_gamma_level1, h_ptrs1.data(), num_gamma * sizeof(half_t*)));
+            // Copy to device symbols asynchronously
+            CUDA_CHECK(cudaMemcpyToSymbolAsync(d_gamma_level0, h_ptrs0.data(), num_gamma * sizeof(half_t*), 0, cudaMemcpyHostToDevice, stream.stream()));
+            CUDA_CHECK(cudaMemcpyToSymbolAsync(d_gamma_level1, h_ptrs1.data(), num_gamma * sizeof(half_t*), 0, cudaMemcpyHostToDevice, stream.stream()));
             
             laplacian_assemble<num_gamma><<<grid2d(pw, ph), block_size_2d, 0, stream.stream()>>>(
                 padded_ptr(l), 
