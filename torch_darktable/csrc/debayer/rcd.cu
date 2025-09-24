@@ -565,8 +565,6 @@ __global__ void calc_detail_blend_kernel(float* input, float* output, int width,
 struct RCDImpl : public RCD {
     int width_;
     int height_;
-    float input_scale_;
-    float output_scale_;
     BayerPattern pattern_;
 
     torch::Device device_;
@@ -581,9 +579,8 @@ struct RCDImpl : public RCD {
     torch::Tensor HQ_diff_;
     torch::Tensor lpf_PQ_;
 
-    RCDImpl(torch::Device device, int width, int height, BayerPattern pattern, float input_scale, float output_scale)
-        : device_(device), width_(width), height_(height), pattern_(pattern),
-          input_scale_(input_scale), output_scale_(output_scale) {
+    RCDImpl(torch::Device device, int width, int height, BayerPattern pattern)
+        : device_(device), width_(width), height_(height), pattern_(pattern) {
 
         const auto buffer_opts = torch::TensorOptions().dtype(torch::kFloat32).device(device);
         output_buffer_ = torch::zeros({height, width, 3}, buffer_opts);
@@ -635,7 +632,7 @@ struct RCDImpl : public RCD {
 
         rcd_populate_kernel<<<grid, block, 0, stream>>>(
             contiguous_input.data_ptr<float>(), cfa_.data_ptr<float>(), rgb0_.data_ptr<float>(),
-            rgb1_.data_ptr<float>(), rgb2_.data_ptr<float>(), width_, height_, pattern_, input_scale_);
+            rgb1_.data_ptr<float>(), rgb2_.data_ptr<float>(), width_, height_, pattern_, 1.0f);
 
         rcd_step_1_1_kernel<<<grid, block, 0, stream>>>(
             cfa_.data_ptr<float>(), VP_diff_.data_ptr<float>(), HQ_diff_.data_ptr<float>(), width_, height_);
@@ -668,7 +665,7 @@ struct RCDImpl : public RCD {
 
         rcd_write_output_kernel<<<grid, block, 0, stream>>>(
             reinterpret_cast<float3*>(output_buffer_.data_ptr<float>()), rgb0_.data_ptr<float>(),
-            rgb1_.data_ptr<float>(), rgb2_.data_ptr<float>(), width_, height_, output_scale_, RCD_MARGIN);
+            rgb1_.data_ptr<float>(), rgb2_.data_ptr<float>(), width_, height_, 1.0f, RCD_MARGIN);
 
         return output_buffer_;
     }
@@ -676,14 +673,10 @@ struct RCDImpl : public RCD {
     int get_width() const override { return width_; }
     int get_height() const override { return height_; }
 
-    void set_input_scale(float scale) override { input_scale_ = scale; }
-    void set_output_scale(float scale) override { output_scale_ = scale; }
-    float get_input_scale() const override { return input_scale_; }
-    float get_output_scale() const override { return output_scale_; }
 };
 
 std::shared_ptr<RCD> create_rcd(torch::Device device, int width, int height, 
-      BayerPattern pattern, float input_scale, float output_scale) {
-    return std::make_shared<RCDImpl>(device, width, height, pattern, input_scale, output_scale);
+      BayerPattern pattern) {
+    return std::make_shared<RCDImpl>(device, width, height, pattern);
 }
 

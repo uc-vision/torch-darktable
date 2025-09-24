@@ -27,7 +27,7 @@ from .color_conversion import (
 )
 from .debayer import (
   BayerPattern,
-  Packed12Format,
+  PackedFormat,
   bilinear5x5_demosaic,
   create_postprocess,
   create_ppg,
@@ -36,7 +36,7 @@ from .debayer import (
   decode12_float,
   decode12_half,
   decode12_u16,
-  encode12,
+  encode,
   encode12_float,
   encode12_u16,
 )
@@ -61,9 +61,8 @@ from .white_balance import apply_white_balance, estimate_white_balance
 __all__ = [
   # Core classes and enums
   'BayerPattern',
-  'BilateralParams',
   'LaplacianParams',
-  'Packed12Format',
+  'PackedFormat',
   'TonemapParameters',
   # Wiener denoising
   'Wiener',
@@ -94,7 +93,7 @@ __all__ = [
   'decode12_half',
   'decode12_u16',
   'denoise',
-  'encode12',
+  'encode',
   'encode12_float',
   'encode12_u16',
   'estimate_channel_noise',

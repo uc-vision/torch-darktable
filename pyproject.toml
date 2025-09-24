@@ -9,8 +9,8 @@ description = "CUDA ISP algorithms extracted from darktable for PyTorch"
 authors = [{name = "Oliver Batchelor"}]
 requires-python = ">=3.10"
 dependencies = [
-    "torch>=2.7.0",
-    "numpy>=2.2.0",
+    "torch>=2.4.0",
+    "numpy",
     "pillow",
     "beartype"
 ]

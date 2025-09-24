@@ -47,29 +47,29 @@ def transformed_size(original_size: tuple[int, int], transform: ImageTransform) 
 
 
 def transform(image: torch.Tensor, transform: ImageTransform):
-  if transform == ImageTransform.none:
-    return image
-  if transform == ImageTransform.rotate_90:
-    return torch.rot90(image, 1, (0, 1)).contiguous()
-  if transform == ImageTransform.rotate_180:
-    return torch.rot90(image, 2, (0, 1)).contiguous()
-  if transform == ImageTransform.rotate_270:
-    return torch.rot90(image, 3, (0, 1)).contiguous()
-  if transform == ImageTransform.flip_horiz:
-    return torch.flip(image, (1,)).contiguous()
-  if transform == ImageTransform.flip_vert:
-    return torch.flip(image, (0,)).contiguous()
-  if transform == ImageTransform.transverse:
-    return torch.flip(image, (0, 1)).contiguous()
-  if transform == ImageTransform.transpose:
-    return torch.transpose(image, 0, 1).contiguous()
-  return None
+  match transform:
+    case ImageTransform.none:
+      return image
+    case ImageTransform.rotate_90:
+      return torch.rot90(image, 1, (0, 1)).contiguous()
+    case ImageTransform.rotate_180:
+      return torch.rot90(image, 2, (0, 1)).contiguous()
+    case ImageTransform.rotate_270:
+      return torch.rot90(image, 3, (0, 1)).contiguous()
+    case ImageTransform.flip_horiz:
+      return torch.flip(image, (1,)).contiguous()
+    case ImageTransform.flip_vert:
+      return torch.flip(image, (0,)).contiguous()
+    case ImageTransform.transverse:
+      return torch.flip(image, (0, 1)).contiguous()
+    case ImageTransform.transpose:
+      return torch.transpose(image, 0, 1).contiguous()
 
 
 @beartype
 def load_raw_bytes(filepath: Path, device: torch.device = torch.device('cuda')):
   """Load raw image bytes into torch tensor without any decoding"""
-  with open(filepath, 'rb') as f:
+  with filepath.open('rb') as f:
     raw_bytes = f.read()
   return torch.frombuffer(raw_bytes, dtype=torch.uint8).to(device, non_blocking=True)
 
@@ -86,7 +86,7 @@ def load_raw_image(
   if camera_settings.padding > 0:
     raw_cuda = raw_cuda[: -camera_settings.padding]
 
-  fmt = td.Packed12Format.IDS if camera_settings.ids_format else td.Packed12Format.STANDARD
+  fmt = td.PackedFormat.Packed12_IDS if camera_settings.ids_format else td.PackedFormat.Packed12
   decoded = td.decode12(raw_cuda, output_dtype=torch.float32, format_type=fmt)
 
   bayer = decoded.view(-1, width)

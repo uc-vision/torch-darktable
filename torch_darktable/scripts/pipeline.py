@@ -109,7 +109,7 @@ class ImagePipeline:
 
     if settings.debayer == 'rcd':
       self.rcd_workspace = td.create_rcd(
-        self.device, self.bayer_size, self.camera_settings.bayer_pattern, input_scale=1.0, output_scale=1.0
+        self.device, self.bayer_size, self.camera_settings.bayer_pattern
       )
 
     if settings.debayer == 'ppg':

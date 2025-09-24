@@ -29,12 +29,8 @@ class RCD:
     width: int,
     height: int,
     pattern: int,
-    input_scale: float = ...,
-    output_scale: float = ...,
   ) -> None: ...
   def process(self, input: torch.Tensor) -> torch.Tensor: ...
-  input_scale: float
-  output_scale: float
 
 class PostProcess:
   def __init__(

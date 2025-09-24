@@ -30,11 +30,6 @@ struct RCD {
     virtual torch::Tensor process(const torch::Tensor& input) = 0;
     virtual int get_width() const = 0;
     virtual int get_height() const = 0;
-    // Parameters
-    virtual void set_input_scale(float scale) = 0;
-    virtual void set_output_scale(float scale) = 0;
-    virtual float get_input_scale() const = 0;
-    virtual float get_output_scale() const = 0;
 };
 
 
@@ -58,7 +53,7 @@ std::shared_ptr<PPG> create_ppg(torch::Device device, int width, int height,
   BayerPattern pattern, float median_threshold);
 
 std::shared_ptr<RCD> create_rcd(torch::Device device, int width, int height, 
-  BayerPattern pattern, float input_scale, float output_scale);
+  BayerPattern pattern);
 
 
 std::shared_ptr<PostProcess> create_postprocess(torch::Device device, int width, int height,

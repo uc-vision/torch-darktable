@@ -57,7 +57,7 @@ def _install_algorithm_repr() -> None:
     return f'PPG(median_threshold={self.median_threshold})'
 
   def _rcd_repr(self) -> str:
-    return f'RCD(input_scale={self.input_scale}, output_scale={self.output_scale})'
+    return 'RCD()'
 
   def _postprocess_repr(self) -> str:
     return (

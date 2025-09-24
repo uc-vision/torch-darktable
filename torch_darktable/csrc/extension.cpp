@@ -20,7 +20,7 @@ std::shared_ptr<PPG> create_ppg(torch::Device device, int width, int height,
   BayerPattern pattern, float median_threshold = 0.0f);
 
 std::shared_ptr<RCD> create_rcd(torch::Device device, int width, int height, 
-  BayerPattern pattern, float input_scale = 1.0f, float output_scale = 1.0f);
+  BayerPattern pattern);
 
 
 std::shared_ptr<PostProcess> create_postprocess(torch::Device device,
@@ -64,11 +64,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     py::class_<RCD, std::shared_ptr<RCD>>(m, "RCD")
         .def(py::init(&create_rcd), "Create RCD demosaic",
              py::arg("device"), py::arg("width"), py::arg("height"),
-             py::arg("pattern"), py::arg("input_scale") = 1.0f, py::arg("output_scale") = 1.0f)
+             py::arg("pattern"))
         .def("process", &RCD::process, "Process image with RCD algorithm",
-             py::arg("input"))
-        .def_property("input_scale", &RCD::get_input_scale, &RCD::set_input_scale, "Input scaling")
-        .def_property("output_scale", &RCD::get_output_scale, &RCD::set_output_scale, "Output scaling");
+             py::arg("input"));
 
 
     py::class_<PostProcess, std::shared_ptr<PostProcess>>(m, "PostProcess")

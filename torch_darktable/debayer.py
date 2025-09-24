@@ -15,9 +15,9 @@ class BayerPattern(Enum):
   GBRG = extension.BayerPattern.GBRG
 
 
-class Packed12Format(Enum):
-  STANDARD = 0
-  IDS = 1
+class PackedFormat(Enum):
+  Packed12 = extension.PackedFormat.Packed12
+  Packed12_IDS = extension.PackedFormat.Packed12_IDS
 
 
 class Bilinear5x5:
@@ -47,15 +47,13 @@ def create_rcd(
   device: torch.device,
   image_size: tuple[int, int],
   bayer_pattern: BayerPattern,
-  *,
-  input_scale: float = 1.0,
-  output_scale: float = 1.0,
+
 ) -> extension.RCD:
   """
   Create an RCD demosaic object.
   """
   width, height = image_size
-  return extension.RCD(device, width, height, bayer_pattern.value, input_scale, output_scale)
+  return extension.RCD(device, width, height, bayer_pattern.value)
 
 
 @beartype
@@ -92,7 +90,7 @@ def create_postprocess(
 
 # 12-bit packing/unpacking functions
 @beartype
-def encode12(image: torch.Tensor, format_type: Packed12Format = Packed12Format.STANDARD) -> torch.Tensor:
+def encode(image: torch.Tensor, format_type: PackedFormat = PackedFormat.Packed12, dtype: torch.dtype = torch.float32) -> torch.Tensor:
   """
   Encode image data to 12-bit packed format.
 
@@ -103,7 +101,9 @@ def encode12(image: torch.Tensor, format_type: Packed12Format = Packed12Format.S
   Returns:
       Packed 12-bit data as uint8 tensor
   """
-  ids = format_type is Packed12Format.IDS
+  assert dtype in {torch.float32, torch.uint16}
+  
+  ids = format_type is PackedFormat.Packed12_IDS
   if image.dtype == torch.uint16:
     return extension.encode12_u16(image, ids_format=ids)
   if image.dtype == torch.float32:
@@ -115,7 +115,7 @@ def encode12(image: torch.Tensor, format_type: Packed12Format = Packed12Format.S
 def decode12(
   packed_data: torch.Tensor,
   output_dtype: torch.dtype = torch.float32,
-  format_type: Packed12Format = Packed12Format.STANDARD,
+  format_type: PackedFormat = PackedFormat.Packed12,
 ) -> torch.Tensor:
   """
   Decode 12-bit packed data to image format.
@@ -128,7 +128,7 @@ def decode12(
   Returns:
       Decoded image tensor
   """
-  ids = format_type is Packed12Format.IDS
+  ids = format_type is PackedFormat.Packed12_IDS
   if output_dtype == torch.float32:
     return extension.decode12_float(packed_data, ids_format=ids)
   if output_dtype == torch.float16:
@@ -163,7 +163,7 @@ def bilinear5x5_demosaic(image: torch.Tensor, bayer_pattern: BayerPattern) -> to
 
 __all__ = [
   'BayerPattern',
-  'Packed12Format',
+  'PackedFormat',
   'bilinear5x5_demosaic',
   'create_postprocess',
   'create_ppg',
@@ -172,7 +172,7 @@ __all__ = [
   'decode12_float',
   'decode12_half',
   'decode12_u16',
-  'encode12',
+  'encode',
   'encode12_float',
   'encode12_u16',
 ]
