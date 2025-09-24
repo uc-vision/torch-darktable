@@ -29,56 +29,21 @@ inline void upload_noise_sigmas(const torch::Tensor& noise_sigmas_tensor, cudaSt
 }
 
 
-__device__ __forceinline__ float block_mean(float value) {
-    auto block = cg::this_thread_block();
-    __shared__ float sum;
-    
-    if (block.thread_rank() == 0) {
-        sum = 0.0f;
-    }
-    
-    auto group = cg::coalesced_threads();
-    float result = cg::reduce(group, value, cg::plus<float>{});
-    if (group.thread_rank() == 0) {
-        atomicAdd(&sum, result);
-    }
-    block.sync();
-    
-    return sum / block.size();
-}
-
-__device__ __forceinline__ float3 block_mean(float3 value) {
-    auto block = cg::this_thread_block();
-    __shared__ float3 sum;
-    
-    if (block.thread_rank() == 0) {
-        sum = make_float3(0.0f, 0.0f, 0.0f);
-    }
-    
-    auto group = cg::coalesced_threads();
-    float3 result = cg::reduce(group, value, cg::plus<float3>{});
-    if (group.thread_rank() == 0) {
-        atomic_add(&sum, result);
-    }
-    block.sync();
-    
-    return sum / block.size();
-}
-
 template<int K, typename T>
-__device__ __forceinline__ T compute_tile_mean(T row_data[K]) {
-    // Each thread sums its row
-    T row_sum = {};
+__device__ __forceinline__ T compute_tile_mean(T col_data[K]) {
+    // Each thread sums its column
+    T col_sum = {};
     #pragma unroll
-    for (int col = 0; col < K; col++) {
-        row_sum = row_sum + row_data[col];
+    for (int row = 0; row < K; row++) {
+        col_sum = col_sum + col_data[row];
     }
     
-    // Use block_mean to average across all threads (all rows)
-    T tile_mean = block_mean(row_sum);
+    // Warp sum across all threads (all columns)
+    auto warp = cg::tiled_partition<32>(cg::this_thread_block());
+    T tile_sum = cg::reduce(warp, col_sum, cg::plus<T>{});
     
     // Normalize by total pixels in tile (K*K)
-    return tile_mean / (K * K);
+    return tile_sum / (K * K);
 }
 
 
@@ -97,56 +62,52 @@ __device__ __forceinline__ int reflect_1d(int x, int limit) {
 }
 
 template<int K, typename T>
-__device__ __forceinline__ void load_row(
+__device__ __forceinline__ void load_col(
     const T* __restrict__ img,
     int stride, int H, int W,
-    int row, T row_data[K]
+    int col, T col_data[K]
 ) {
     int2 g = get_group_pos();
     int2 grid_offset = {K / stride, K / stride};
     
-    // Row-constant calculations
-    int src_y = (g.y - grid_offset.y) * stride + row;
-    int refl_y = reflect_1d(src_y, H);
-    int base_y_offset = refl_y * W;
+    // Column-constant calculations
+    int src_x = (g.x - grid_offset.x) * stride + col;
+    int refl_x = reflect_1d(src_x, W);
     
     #pragma unroll
-    for (int col = 0; col < K; col++) {
-        int src_x = (g.x - grid_offset.x) * stride + col;
-        int refl_x = reflect_1d(src_x, W);
-        row_data[col] = img[base_y_offset + refl_x];
+    for (int row = 0; row < K; row++) {
+        int src_y = (g.y - grid_offset.y) * stride + row;
+        int refl_y = reflect_1d(src_y, H);
+        col_data[row] = img[refl_y * W + refl_x];
     }
 }
 
 template<int K, typename T>
-__device__ __forceinline__ void store_row(
+__device__ __forceinline__ void store_col(
     T* __restrict__ out,
     float* __restrict__ mask,
     int stride, int H_pad, int W_pad,
-    int row, const T row_data[K],
+    int col, const T col_data[K],
     const T& mean
 ) {
     int2 g = get_group_pos();
     int2 grid_offset = {K / stride, K / stride};
     
-    // Row-constant calculations
-    int out_y = (g.y - grid_offset.y) * stride + row + K;    
-    if (out_y >= H_pad) return;
-
-    int base_y_offset = out_y * W_pad;
-    int base_out_x = (g.x - grid_offset.x) * stride + K;
+    // Column-constant calculations
+    int out_x = (g.x - grid_offset.x) * stride + col + K;    
+    if (out_x >= W_pad) return;
     
     #pragma unroll
-    for (int col = 0; col < K; col++) {
-        int out_x = base_out_x + col;
+    for (int row = 0; row < K; row++) {
+        int out_y = (g.y - grid_offset.y) * stride + row + K;
         
-        if (out_x < W_pad) {
+        if (out_y < H_pad) {
             int2 pos = make_int2(col, row);
             float fft_window = Window<K>::fft_window(pos);
             auto interp_window = Window<K>::interp_window(pos);
             
-            int out_idx = base_y_offset + out_x;
-            T reconstructed = (row_data[col] + mean * fft_window) * interp_window;
+            int out_idx = out_y * W_pad + out_x;
+            T reconstructed = (col_data[row] + mean * fft_window) * interp_window;
             
             atomic_add(&out[out_idx], reconstructed);
             atomicAdd(&mask[out_idx], fft_window * interp_window);
@@ -172,27 +133,27 @@ __global__ void wiener_tile_kernel(
     int H, int W, int H_pad, int W_pad,
     int stride
 ) {
-    int row = threadIdx.x;  // Thread processes row 'row' (0 to K-1)
+    int col = threadIdx.x;  // Thread processes column 'col' (0 to K-1)
     
-    // Each thread loads one row (K pixels)
-    T row_data[K];
-    load_row<K, T>(img, stride, H, W, row, row_data);
+    // Each thread loads one column (K pixels)
+    T col_data[K];
+    load_col<K, T>(img, stride, H, W, col, col_data);
     
     // Compute mean across entire tile using all threads
-    T tile_mean = compute_tile_mean<K, T>(row_data);
+    T tile_mean = compute_tile_mean<K, T>(col_data);
     
     // Apply windowing and subtract mean
     #pragma unroll
-    for (int col = 0; col < K; col++) {
+    for (int row = 0; row < K; row++) {
         int2 pos = make_int2(col, row);
         float fft_window = Window<K>::fft_window(pos);
-        row_data[col] = (row_data[col] - tile_mean) * fft_window;
+        col_data[row] = (col_data[row] - tile_mean) * fft_window;
     }
     
     // TODO: FFT processing will go here
     
-    // Store row back to output
-    store_row<K, T>(out, mask, stride, H_pad, W_pad, row, row_data, tile_mean);
+    // Store column back to output
+    store_col<K, T>(out, mask, stride, H_pad, W_pad, col, col_data, tile_mean);
 }
 
 
