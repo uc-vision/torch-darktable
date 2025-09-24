@@ -16,8 +16,8 @@ class BayerPattern(Enum):
 
 
 class PackedFormat(Enum):
-  Packed12 = extension.PackedFormat.Packed12
-  Packed12_IDS = extension.PackedFormat.Packed12_IDS
+  Packed12 = 0
+  Packed12_IDS = 1
 
 
 class Bilinear5x5:

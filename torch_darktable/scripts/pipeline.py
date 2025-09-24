@@ -209,7 +209,7 @@ class ImagePipeline:
     if self.settings.tonemap_method == 'reinhard':
       rgb_tm = td.reinhard_tonemap(rgb_raw, metrics, params)
     elif self.settings.tonemap_method == 'linear':
-      rgb_tm = td.linear_tonemap(rgb_raw, metrics, params)
+      rgb_tm = td.linear_tonemap(rgb_raw, metrics, params).clamp(0.0, 1.0)
     elif self.settings.tonemap_method == 'aces':
       rgb_tm = td.aces_tonemap(rgb_raw, metrics, params)
     else:
