@@ -71,26 +71,29 @@ __device__ __forceinline__ void ifft(Complex row[N]) {
 
 template<int N>
 __device__ __forceinline__ void transpose_rows(Complex row[N]) {
-    auto warp = cg::tiled_partition<N>(cg::this_thread_block());
-    int tid = warp.thread_rank();
-    
-    Complex temp[N];
+    __shared__ Complex tile[N][N];
+    auto block = cg::this_thread_block();
+
+    int tx = threadIdx.x;
+
     #pragma unroll
     for (int i = 0; i < N; i++) {
-        temp[i] = row[i];
+        tile[tx][i] = row[i];
     }
-    
+
+    block.sync();
+
     #pragma unroll
     for (int i = 0; i < N; i++) {
-        row[i] = Complex(
-            warp.shfl(temp[i].re, tid),
-            warp.shfl(temp[i].im, tid)
-        );
+        row[i] = tile[i][tx];
     }
+
+    block.sync();
 }
 
 template<int N>
 __device__ __forceinline__ void fft_2d(Complex row[N]) {
+    // separable 2d fft - first row fft, then transpose, then column fft
     fft<N>(row);
     transpose_rows<N>(row);
     fft<N>(row);

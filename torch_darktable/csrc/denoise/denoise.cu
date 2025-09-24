@@ -148,9 +148,7 @@ __global__ void wiener_tile_kernel(
         fft_data[row].re = (chan_data[row] - chan_mean) * fft_window;
         fft_data[row].im = 0.0f;
     }
-    
-
-    
+        
     // FFT processing
     fft_2d<K>(fft_data);
     

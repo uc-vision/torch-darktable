@@ -1,4 +1,5 @@
 from dataclasses import replace
+import os
 from pathlib import Path
 from typing import get_args
 
@@ -154,8 +155,8 @@ class ProcessRawUI:
     (
       ax_gamma, ax_light, ax_detail, ax_bil_sigma_s, ax_bil_sigma_r,
       ax_wiener_sigma, ax_intensity, ax_vibrance, ax_lap_shadows,
-      ax_lap_highlights, ax_lap_clarity
-    ) = create_axes_vertical(11)
+      ax_lap_highlights, ax_lap_clarity, ax_jpeg_quality
+    ) = create_axes_vertical(12)
 
     # Tonemap group
     self.gamma = Slider(ax_gamma, 'gamma', 0.1, 3.0, valinit=self.settings.tonemap.gamma)
@@ -183,6 +184,21 @@ class ProcessRawUI:
       ax_lap_highlights, 'lap_highlights', -1.0, 3.0, valinit=self.settings.laplacian_highlights
     )
     self.lap_clarity = Slider(ax_lap_clarity, 'lap_clarity', -1.0, 1.0, valinit=self.settings.laplacian_clarity)
+
+    # JPEG quality slider
+    self.jpeg_quality = Slider(ax_jpeg_quality, 'jpeg_quality', 10, 100, valinit=95, valfmt='%d')
+
+    # File size display text
+    file_size_y = 0.10
+    ax_file_size = plt.axes((sidebar_x, file_size_y, sidebar_w, 0.03))
+    ax_file_size.set_xlim(0, 1)
+    ax_file_size.set_ylim(0, 1)
+    ax_file_size.set_xticks([])
+    ax_file_size.set_yticks([])
+    ax_file_size.set_facecolor('none')
+    for spine in ax_file_size.spines.values():
+      spine.set_visible(False)
+    self.file_size_text = ax_file_size.text(0.5, 0.5, '', ha='center', va='center', fontsize=10)
 
     # Save and reset buttons at bottom of sidebar
     button_w = sidebar_w / 2
@@ -335,8 +351,23 @@ class ProcessRawUI:
       # Create JPEG filename from current input path
       current_path = self.image_files[self.nav_state['current_index']]
       output_path = current_path.with_suffix('.jpg')
-      pil_image.save(output_path, 'JPEG', quality=95)
-      print(f'Saved JPEG to: {output_path}')
+      
+      # Get quality from slider
+      quality = int(self.jpeg_quality.val)
+      pil_image.save(output_path, 'JPEG', quality=quality)
+      
+      # Get file size and display it
+      file_size = os.path.getsize(output_path)
+      if file_size < 1024:
+        size_str = f'{file_size} B'
+      elif file_size < 1024 * 1024:
+        size_str = f'{file_size / 1024:.1f} KB'
+      else:
+        size_str = f'{file_size / (1024 * 1024):.1f} MB'
+      
+      self.file_size_text.set_text(f'File size: {size_str}')
+      self.fig.canvas.draw_idle()
+      print(f'Saved JPEG to: {output_path} (Quality: {quality}, Size: {size_str})')
 
     def on_reset(event):
       # Reset current preset to hardcoded defaults
