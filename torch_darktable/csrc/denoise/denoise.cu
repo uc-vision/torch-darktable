@@ -3,7 +3,8 @@
 
 #include "reduction.h"
 #include "denoise.h"
-#include "fft/fft_coop.h"
+// #include "fft/fft_coop.h"
+#include "fft/common.h"
 #include "window.h"
 #include "cuda_utils.h"
 #include "pixel.h"
@@ -64,6 +65,22 @@ __device__ __forceinline__ float3 block_mean(float3 value) {
     return sum / block.size();
 }
 
+template<int K, typename T>
+__device__ __forceinline__ T compute_tile_mean(T row_data[K]) {
+    // Each thread sums its row
+    T row_sum = {};
+    #pragma unroll
+    for (int col = 0; col < K; col++) {
+        row_sum = row_sum + row_data[col];
+    }
+    
+    // Use block_mean to average across all threads (all rows)
+    T tile_mean = block_mean(row_sum);
+    
+    // Normalize by total pixels in tile (K*K)
+    return tile_mean / (K * K);
+}
+
 
 // Using custom FFT implementation
 
@@ -73,71 +90,67 @@ __device__ __forceinline__ int2 get_group_pos() {
     return make_int2(g.x, g.y);
 }
 
-__device__ __forceinline__ int2 get_thread_pos() {
-    auto block = cg::this_thread_block();
-    dim3 t = block.thread_index();
-    return make_int2(t.x, t.y);
-}
-
-__device__ __forceinline__ int reflect_index(int x, int limit) {
+__device__ __forceinline__ int reflect_1d(int x, int limit) {
     if (x < 0) x = -x;
     if (x >= limit) x = 2 * limit - x - 1;
     return x;
 }
 
-
-// Device helper functions for the kernel
-template<int K>
-__device__ __forceinline__ int get_tile_idx() {
-    auto block = cg::this_thread_block();
-    dim3 t = block.thread_index();
-    return t.y * K + t.x;
-}
-
 template<int K, typename T>
-__device__ __forceinline__ T load_pixel(
+__device__ __forceinline__ void load_row(
     const T* __restrict__ img,
-    int stride, int H, int W
+    int stride, int H, int W,
+    int row, T row_data[K]
 ) {
     int2 g = get_group_pos();
-    int2 t = get_thread_pos();
-    int tile_idx = get_tile_idx<K>();
-
-       
-    // Load one pixel with reflect padding
-    // Shift grid to start earlier for proper boundary coverage
-    int2 grid_offset = {K / stride, K / stride};  // Shift by one tile
-    int2 src_pos = (g - grid_offset) * stride + t;
-    int2 refl_pos = make_int2(reflect_index(src_pos.x, W), reflect_index(src_pos.y, H));
-    return img[(refl_pos.y * W + refl_pos.x)];  // HWC layout
+    int2 grid_offset = {K / stride, K / stride};
+    
+    // Row-constant calculations
+    int src_y = (g.y - grid_offset.y) * stride + row;
+    int refl_y = reflect_1d(src_y, H);
+    int base_y_offset = refl_y * W;
+    
+    #pragma unroll
+    for (int col = 0; col < K; col++) {
+        int src_x = (g.x - grid_offset.x) * stride + col;
+        int refl_x = reflect_1d(src_x, W);
+        row_data[col] = img[base_y_offset + refl_x];
+    }
 }
 
 template<int K, typename T>
-__device__ __forceinline__ void store_pixel(
+__device__ __forceinline__ void store_row(
     T* __restrict__ out,
     float* __restrict__ mask,
-
-    int stride, int H_pad, int W_pad, 
-    const T& value,
-    const T& mean,
-    float fft_window
+    int stride, int H_pad, int W_pad,
+    int row, const T row_data[K],
+    const T& mean
 ) {
     int2 g = get_group_pos();
-    int2 t = get_thread_pos();
-    int tile_idx = get_tile_idx<K>();
-    
-    auto interp_window = Window<K>::interp_window(t);
-    
-    // Store one pixel back to output  
     int2 grid_offset = {K / stride, K / stride};
-    int2 out_pos = (g - grid_offset) * stride + t + K;
-    if (out_pos.y < H_pad && out_pos.x < W_pad) {
-        int out_idx = out_pos.y * W_pad + out_pos.x;
+    
+    // Row-constant calculations
+    int out_y = (g.y - grid_offset.y) * stride + row + K;    
+    if (out_y >= H_pad) return;
 
-        T reconstructed = (value + mean * fft_window) * interp_window;
-
-        atomic_add(&out[out_idx], reconstructed);
-        atomicAdd(&mask[out_idx], fft_window * interp_window);
+    int base_y_offset = out_y * W_pad;
+    int base_out_x = (g.x - grid_offset.x) * stride + K;
+    
+    #pragma unroll
+    for (int col = 0; col < K; col++) {
+        int out_x = base_out_x + col;
+        
+        if (out_x < W_pad) {
+            int2 pos = make_int2(col, row);
+            float fft_window = Window<K>::fft_window(pos);
+            auto interp_window = Window<K>::interp_window(pos);
+            
+            int out_idx = base_y_offset + out_x;
+            T reconstructed = (row_data[col] + mean * fft_window) * interp_window;
+            
+            atomic_add(&out[out_idx], reconstructed);
+            atomicAdd(&mask[out_idx], fft_window * interp_window);
+        }
     }
 }
 
@@ -157,30 +170,29 @@ __global__ void wiener_tile_kernel(
     T* __restrict__ out,
     float* __restrict__ mask,
     int H, int W, int H_pad, int W_pad,
-    int stride, int grid_h, int grid_w
+    int stride
 ) {
-
-    int2 t = get_thread_pos();
-
-    // 1. Load tile and compute mean
-    T value = load_pixel<K, T>(img, stride, H, W);
-    T mean = block_mean(value);
-  
-    float fft_window = Window<K>::fft_window(t);
-    value = (value - mean) * fft_window;
-
-    constexpr int C = channels<T>();
+    int row = threadIdx.x;  // Thread processes row 'row' (0 to K-1)
+    
+    // Each thread loads one row (K pixels)
+    T row_data[K];
+    load_row<K, T>(img, stride, H, W, row, row_data);
+    
+    // Compute mean across entire tile using all threads
+    T tile_mean = compute_tile_mean<K, T>(row_data);
+    
+    // Apply windowing and subtract mean
     #pragma unroll
-    for (int i = 0; i < C; i++) {
-      auto complex = fft_2d<K>(Complex(get_channel(value, i), 0.0f));
-
-      complex = apply_gain(complex, noise_sigmas[i]);
-      set_channel(value, i, ifft_2d<K>(complex).re);
+    for (int col = 0; col < K; col++) {
+        int2 pos = make_int2(col, row);
+        float fft_window = Window<K>::fft_window(pos);
+        row_data[col] = (row_data[col] - tile_mean) * fft_window;
     }
     
-    // 6. Store tile back to output (add mean back)
-      store_pixel<K, T>(out, mask, stride, H_pad, W_pad, value, mean, fft_window);
-
+    // TODO: FFT processing will go here
+    
+    // Store row back to output
+    store_row<K, T>(out, mask, stride, H_pad, W_pad, row, row_data, tile_mean);
 }
 
 
@@ -255,7 +267,7 @@ private:
         TORCH_CHECK(noise_sigmas.numel() == C, "noise_sigmas must have C elements");
         
         dim3 grid(grid_w, grid_h);
-        dim3 block(K, K);  // KxK threads, each handles one pixel
+        dim3 block(K);  // K threads, each handles one row of K pixels
 
         auto stream = at::cuda::getCurrentCUDAStream(device_.index());
         
@@ -267,7 +279,7 @@ private:
             reinterpret_cast<pixel*>(padded_out.data_ptr<float>()),
             mask.data_ptr<float>(),
             H, W, h_pad, w_pad,
-            stride, grid_h, grid_w
+            stride
         );
 
         

@@ -118,29 +118,42 @@ constexpr int log2_constexpr(int n) {
     return (n <= 1) ? 0 : 1 + log2_constexpr(n / 2);
 }
 
-// Twiddle factor selection
+// FFT specializations
 template<int N>
-__device__ __forceinline__ constexpr const Complex* get_fft_twiddles();
+struct FFT;
 
 template<>
-__device__ __forceinline__ constexpr const Complex* get_fft_twiddles<16>() {
-    return fft_twiddles_16;
-}
+struct FFT<16> {
+    static constexpr int N = 16;
+    __device__ __forceinline__ static constexpr Complex get(int idx) {
+        return fft_twiddles_16[idx];
+    }
+};
 
 template<>
-__device__ __forceinline__ constexpr const Complex* get_fft_twiddles<32>() {
-    return fft_twiddles_32;
-}
+struct FFT<32> {
+    static constexpr int N = 32;
+    __device__ __forceinline__ static constexpr Complex get(int idx) {
+        return fft_twiddles_32[idx];
+    }
+};
 
+// IFFT specializations
 template<int N>
-__device__ __forceinline__ constexpr const Complex* get_ifft_twiddles();
+struct IFFT;
 
 template<>
-__device__ __forceinline__ constexpr const Complex* get_ifft_twiddles<16>() {
-    return ifft_twiddles_16;
-}
+struct IFFT<16> {
+    static constexpr int N = 16;
+    __device__ __forceinline__ static constexpr Complex get(int idx) {
+        return ifft_twiddles_16[idx];
+    }
+};
 
 template<>
-__device__ __forceinline__ constexpr const Complex* get_ifft_twiddles<32>() {
-    return ifft_twiddles_32;
-}
+struct IFFT<32> {
+    static constexpr int N = 32;
+    __device__ __forceinline__ static constexpr Complex get(int idx) {
+        return ifft_twiddles_32[idx];
+    }
+};
