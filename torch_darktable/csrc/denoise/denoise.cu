@@ -1,13 +1,16 @@
 #include <cuda_runtime.h>
+#include <cooperative_groups.h>
 
 #include "reduction.h"
 #include "denoise.h"
-#include "fft.h"
+#include "fft/fft_coop.h"
 #include "window.h"
 #include "cuda_utils.h"
+#include "pixel.h"
 
 #include <c10/cuda/CUDAStream.h>
 
+namespace cg = cooperative_groups;
 
 namespace {
 
@@ -17,83 +20,44 @@ constexpr float eps = 1e-15f;
 __constant__ float noise_sigmas[3];
 
 // Helper to upload noise sigmas to constant memory
-template<int C>
+template<typename T>
 inline void upload_noise_sigmas(const torch::Tensor& noise_sigmas_tensor, cudaStream_t stream) {
+    constexpr int C = channels<T>();
     CUDA_CHECK(cudaMemcpyToSymbolAsync(noise_sigmas, noise_sigmas_tensor.data_ptr<float>(), 
                                       C * sizeof(float), 0, cudaMemcpyDeviceToDevice, stream));
 }
 
-template<int C>
-struct pixel_type;
 
-template<>
-struct pixel_type<1> {
-  using type = float;
-
-  __device__ __forceinline__ static void atomic_add(float* addr, float value) {
-      atomicAdd(addr, value);
-  }
-
-  __device__ __forceinline__ static float zero() {
-    return 0.0f;
-  }
-
-  __host__ static float from_tensor(const torch::Tensor& tensor) {
-    return tensor[0].item<float>();
-  }
-
-  __device__ __forceinline__ static float get(const float& pixel, int i) {
-      return pixel;
-  }
-
-  __device__ __forceinline__ static void set(float& pixel, int i, float value) {
-      pixel = value;
-  }
-};
-
-template<>
-struct pixel_type<3> {
-  using type = float3;
-
-  __device__ __forceinline__ static void atomic_add(float3* addr, float3 value) {
-      atomicAdd(&addr->x, value.x);
-      atomicAdd(&addr->y, value.y);
-      atomicAdd(&addr->z, value.z);
-  }
-
-  __device__ __forceinline__ static float3 zero() {
-    return make_float3(0.0f, 0.0f, 0.0f);
-  }
-
-  __host__ static float3 from_tensor(const torch::Tensor& tensor) {
-      return make_float3(tensor[0].item<float>(), tensor[1].item<float>(), tensor[2].item<float>());
-  }
-
-  __device__ __forceinline__ static float get(const float3& pixel, int i) {
-      return (&pixel.x)[i];
-  }
-
-  __device__ __forceinline__ static void set(float3& pixel, int i, float value) {
-      (&pixel.x)[i] = value;
-  }
-};
-
-template<int C>
-using pixel_t = typename pixel_type<C>::type;
-
-template<int C>
-__device__ __forceinline__ pixel_t<C> block_mean(pixel_t<C> value) {
+__device__ __forceinline__ float block_mean(float value) {
     auto block = cg::this_thread_block();
-    __shared__ typename pixel_type<C>::type sum;
+    __shared__ float sum;
     
     if (block.thread_rank() == 0) {
-        sum = pixel_type<C>::zero();
+        sum = 0.0f;
     }
     
     auto group = cg::coalesced_threads();
-    pixel_t<C> result = cg::reduce(group, value, cg::plus<pixel_t<C>>{});
+    float result = cg::reduce(group, value, cg::plus<float>{});
     if (group.thread_rank() == 0) {
-        pixel_type<C>::atomic_add(&sum, result);
+        atomicAdd(&sum, result);
+    }
+    block.sync();
+    
+    return sum / block.size();
+}
+
+__device__ __forceinline__ float3 block_mean(float3 value) {
+    auto block = cg::this_thread_block();
+    __shared__ float3 sum;
+    
+    if (block.thread_rank() == 0) {
+        sum = make_float3(0.0f, 0.0f, 0.0f);
+    }
+    
+    auto group = cg::coalesced_threads();
+    float3 result = cg::reduce(group, value, cg::plus<float3>{});
+    if (group.thread_rank() == 0) {
+        atomic_add(&sum, result);
     }
     block.sync();
     
@@ -130,9 +94,9 @@ __device__ __forceinline__ int get_tile_idx() {
     return t.y * K + t.x;
 }
 
-template<int K, int C>
-__device__ __forceinline__ pixel_t<C> load_pixel(
-    const pixel_t<C>* __restrict__ img,
+template<int K, typename T>
+__device__ __forceinline__ T load_pixel(
+    const T* __restrict__ img,
     int stride, int H, int W
 ) {
     int2 g = get_group_pos();
@@ -148,14 +112,14 @@ __device__ __forceinline__ pixel_t<C> load_pixel(
     return img[(refl_pos.y * W + refl_pos.x)];  // HWC layout
 }
 
-template<int K, int C>
+template<int K, typename T>
 __device__ __forceinline__ void store_pixel(
-    pixel_t<C>* __restrict__ out,
+    T* __restrict__ out,
     float* __restrict__ mask,
 
     int stride, int H_pad, int W_pad, 
-    pixel_t<C> const& value,
-    pixel_t<C> const& mean,
+    const T& value,
+    const T& mean,
     float fft_window
 ) {
     int2 g = get_group_pos();
@@ -170,9 +134,9 @@ __device__ __forceinline__ void store_pixel(
     if (out_pos.y < H_pad && out_pos.x < W_pad) {
         int out_idx = out_pos.y * W_pad + out_pos.x;
 
-        pixel_t<C> reconstructed = (value + mean * fft_window) * interp_window;
+        T reconstructed = (value + mean * fft_window) * interp_window;
 
-        pixel_type<C>::atomic_add(&out[out_idx], reconstructed);
+        atomic_add(&out[out_idx], reconstructed);
         atomicAdd(&mask[out_idx], fft_window * interp_window);
     }
 }
@@ -187,11 +151,11 @@ __device__ __forceinline__ Complex apply_gain(Complex value, float sigma) {
 
 
 // Main kernel: orchestrates the Wiener filtering pipeline
-template<int K, int C>
+template<int K, typename T>
 __global__ void wiener_tile_kernel(
-    const pixel_t<C>* __restrict__ img,    // (C, H, W)
-    pixel_t<C>* __restrict__ out,          // (C, H_pad, W_pad)  
-    float* __restrict__ mask,         // (H_pad, W_pad)
+    const T* __restrict__ img,
+    T* __restrict__ out,
+    float* __restrict__ mask,
     int H, int W, int H_pad, int W_pad,
     int stride, int grid_h, int grid_w
 ) {
@@ -199,32 +163,32 @@ __global__ void wiener_tile_kernel(
     int2 t = get_thread_pos();
 
     // 1. Load tile and compute mean
-    pixel_t<C> value = load_pixel<K, C>(img, stride, H, W);
-    pixel_t<C> mean = block_mean<C>(value);
+    T value = load_pixel<K, T>(img, stride, H, W);
+    T mean = block_mean(value);
   
     float fft_window = Window<K>::fft_window(t);
     value = (value - mean) * fft_window;
 
+    constexpr int C = channels<T>();
     #pragma unroll
     for (int i = 0; i < C; i++) {
-      auto complex = FFT<K>::fft_2d(Complex(pixel_type<C>::get(value, i), 0.0f));
+      auto complex = fft_2d<K>(Complex(get_channel(value, i), 0.0f));
 
-      
       complex = apply_gain(complex, noise_sigmas[i]);
-      pixel_type<C>::set(value, i, FFT<K>::ifft_2d(complex).re);
+      set_channel(value, i, ifft_2d<K>(complex).re);
     }
     
     // 6. Store tile back to output (add mean back)
-      store_pixel<K, C>(out, mask, stride, H_pad, W_pad, value, mean, fft_window);
+      store_pixel<K, T>(out, mask, stride, H_pad, W_pad, value, mean, fft_window);
 
 }
 
 
-template<int K, int C>
+template<int K, typename T>
 __global__ void normalize_and_crop_kernel(
-    pixel_t<C> const * __restrict__ padded_out,  // (C, H_pad, W_pad)
-    pixel_t<C>* __restrict__ final_out,         // (C, H, W) - final output
-    float const* __restrict__ mask,        // (H_pad, W_pad)
+    const T* __restrict__ padded_out,  // (C, H_pad, W_pad)
+    T* __restrict__ final_out,         // (C, H, W) - final output
+    const float* __restrict__ mask,        // (H_pad, W_pad)
 
     int H, int W, int H_pad, int W_pad
 ) {
@@ -264,7 +228,7 @@ private:
     torch::Tensor _process(const torch::Tensor &input, const torch::Tensor &noise_sigmas) {
         static_assert(C == 1 || C == 3, "C must be 1 or 3");
         
-        typedef typename pixel_type<C>::type pixel;
+        using pixel = std::conditional_t<C == 1, float, float3>;
         TORCH_CHECK(input.device() == device_, "input device mismatch");
         TORCH_CHECK(input.dim() == 3, "expected HWC tensor");
 
@@ -296,9 +260,9 @@ private:
         auto stream = at::cuda::getCurrentCUDAStream(device_.index());
         
         // Upload noise sigmas to constant memory
-        upload_noise_sigmas<C>(noise_sigmas, stream);
+        upload_noise_sigmas<pixel>(noise_sigmas, stream);
        
-        wiener_tile_kernel<K, C><<<grid, block, 0, stream>>>(
+        wiener_tile_kernel<K, pixel><<<grid, block, 0, stream>>>(
             reinterpret_cast<pixel const*>(input.data_ptr<float>()),
             reinterpret_cast<pixel*>(padded_out.data_ptr<float>()),
             mask.data_ptr<float>(),
@@ -315,7 +279,7 @@ private:
         dim3 norm_grid(div_up(W, K), div_up(H, K));
         dim3 norm_block(K, K);
         
-        normalize_and_crop_kernel<K, C><<<norm_grid, norm_block, 0, stream>>>(
+        normalize_and_crop_kernel<K, pixel><<<norm_grid, norm_block, 0, stream>>>(
             reinterpret_cast<pixel const*>(padded_out.data_ptr<float>()),
             reinterpret_cast<pixel*>(final_out.data_ptr<float>()),
             mask.data_ptr<float>(),

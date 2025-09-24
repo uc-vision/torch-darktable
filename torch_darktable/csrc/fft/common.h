@@ -1,11 +1,7 @@
 #pragma once
 
 #include <cuda_runtime.h>
-#include <cooperative_groups.h>
 #include <cmath>
-#include <array>
-
-namespace cg = cooperative_groups;
 
 struct Complex {
     float re, im;
@@ -122,111 +118,29 @@ constexpr int log2_constexpr(int n) {
     return (n <= 1) ? 0 : 1 + log2_constexpr(n / 2);
 }
 
+// Twiddle factor selection
+template<int N>
+__device__ __forceinline__ constexpr const Complex* get_fft_twiddles();
+
+template<>
+__device__ __forceinline__ constexpr const Complex* get_fft_twiddles<16>() {
+    return fft_twiddles_16;
+}
+
+template<>
+__device__ __forceinline__ constexpr const Complex* get_fft_twiddles<32>() {
+    return fft_twiddles_32;
+}
 
 template<int N>
-__device__ __forceinline__ Complex shfl(cg::thread_block_tile<N> warp, Complex value, int partner) {
-    return Complex(warp.shfl(value.re, partner), warp.shfl(value.im, partner));
-}
-
-
-// Generic cooperative groups FFT template
-template<int N, bool inverse>
-__device__ __forceinline__ Complex coop_warp_fft(Complex my_data, float norm_factor, const Complex* twiddles) {
-    constexpr int stages = log2_constexpr(N);
-    
-    auto warp = cg::tiled_partition<N>(cg::this_thread_block());
-    int tid = warp.thread_rank();
-    
-    // Bit-reverse permutation
-    int rev_tid = __brev(tid) >> (32 - stages);
-    Complex temp = my_data;
-    my_data = shfl<N>(warp, temp, rev_tid);
-    
-    // Radix-2 butterflies
-    constexpr int twiddle_size = N / 2;
-    #pragma unroll
-    for (int stage = 0; stage < stages; stage++) {
-        int step = 1 << stage;
-        int partner = tid ^ step;
-        
-        // Exchange data with butterfly partner
-        Complex partner_data = shfl<N>(warp, my_data, partner);
-               
-        if ((tid & step) == 0) {
-            int twiddle_idx = (tid & (step - 1)) * (twiddle_size >> stage);
-            my_data = my_data + partner_data * twiddles[twiddle_idx];
-        } else {
-            int twiddle_idx = (partner & (step - 1)) * (twiddle_size >> stage);
-            my_data = partner_data - my_data * twiddles[twiddle_idx];
-        }
-    }
-    
-    return my_data * norm_factor;
-}
-
-// Templated FFT class
-template<int K>
-struct FFT;
-
-template<int K>
-__device__ __forceinline__ Complex transpose_block(Complex value) {
-    auto block = cg::this_thread_block();
-    dim3 idx = block.thread_index();
-
-    __shared__ Complex shared_tile[K*K];
-    block.sync();
-
-    shared_tile[idx.y * K + idx.x] = value;
-    block.sync();
-
-    return shared_tile[idx.x * K + idx.y];
-}
-
+__device__ __forceinline__ constexpr const Complex* get_ifft_twiddles();
 
 template<>
-struct FFT<16> {
-    __device__ __forceinline__ static void fft_1d(Complex& data) {
-        data = coop_warp_fft<16, false>(data, 1.0f, fft_twiddles_16);
-    }
-    
-    __device__ __forceinline__ static void ifft_1d(Complex& data) {
-        data = coop_warp_fft<16, true>(data, 1.0f / 16.0f, ifft_twiddles_16);
-    }
-    
-    __device__ __forceinline__ static Complex fft_2d(Complex value) {
-        value = coop_warp_fft<16, false>(value, 1.0f, fft_twiddles_16);
-        value = transpose_block<16>(value);
-        return coop_warp_fft<16, false>(value, 1.0f, fft_twiddles_16);
-    }
-    
-    __device__ __forceinline__ static Complex ifft_2d(Complex value) {                
-        value = coop_warp_fft<16, true>(value, 1.0f / 16.0f, ifft_twiddles_16);
-        value = transpose_block<16>(value);
-        return coop_warp_fft<16, true>(value, 1.0f / 16.0f, ifft_twiddles_16);
-    }
-};
+__device__ __forceinline__ constexpr const Complex* get_ifft_twiddles<16>() {
+    return ifft_twiddles_16;
+}
 
 template<>
-struct FFT<32> {
-    __device__ __forceinline__ static void fft_1d(Complex& data) {
-        data = coop_warp_fft<32, false>(data, 1.0f, fft_twiddles_32);
-    }
-    
-    __device__ __forceinline__ static void ifft_1d(Complex& data) {
-        data = coop_warp_fft<32, true>(data, 1.0f / 32.0f, ifft_twiddles_32);
-    }
-    
-    __device__ __forceinline__ static Complex fft_2d(Complex value) {
-        value = coop_warp_fft<32, false>(value, 1.0f, fft_twiddles_32);
-        value = transpose_block<32>(value);
-        return coop_warp_fft<32, false>(value, 1.0f, fft_twiddles_32);
-    }
-    
-    __device__ __forceinline__ static Complex ifft_2d(Complex value) {
-        value = coop_warp_fft<32, true>(value, 1.0f / 32.0f, ifft_twiddles_32);
-        value = transpose_block<32>(value);
-        return coop_warp_fft<32, true>(value, 1.0f / 32.0f, ifft_twiddles_32);
-    }
-};
-
-
+__device__ __forceinline__ constexpr const Complex* get_ifft_twiddles<32>() {
+    return ifft_twiddles_32;
+}
