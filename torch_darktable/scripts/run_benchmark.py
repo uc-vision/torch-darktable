@@ -103,6 +103,13 @@ def run_benchmark(
     bench_iters=bench_iters,
   )
   benchmark(
+    'Wiener 32x4 Gray',
+    partial(wiener32x4.process_luminance, noise=0.05),
+    rgb_tensor,
+    warmup_iters=warmup_iters,
+    bench_iters=bench_iters,
+  )
+  benchmark(
     'Estimate Noise',
     td.estimate_channel_noise,
     rgb_tensor,
