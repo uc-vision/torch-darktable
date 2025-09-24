@@ -70,7 +70,7 @@ __device__ __forceinline__ void store_channel(
     float* __restrict__ out,
     float* __restrict__ mask,
     int stride, int H_pad, int W_pad,
-    int col, int c, const float chan_data[K],
+    int col, int c, const Complex chan_data[K],
     float chan_mean
 ) {
     int2 g = get_group_pos();
@@ -89,7 +89,9 @@ __device__ __forceinline__ void store_channel(
             auto interp_window = Window<K>::interp_window(pos);
             
             int out_idx = out_y * W_pad + out_x;
-            float reconstructed_chan = (chan_data[row] + chan_mean * fft_window) * interp_window;
+            float value = chan_data[row].re;
+
+            float reconstructed_chan = (value + chan_mean * fft_window) * interp_window;
             atomicAdd(&out[out_idx * C + c], reconstructed_chan);
             
             if (c == 0) {  // Only add mask once per pixel
@@ -135,29 +137,29 @@ __global__ void wiener_tile_kernel(
     float chan_mean = tile_chan_sum / (K * K);
     
     // Apply windowing and subtract mean
+    Complex fft_data[K];
+
+
     #pragma unroll
     for (int row = 0; row < K; row++) {
         int2 pos = make_int2(col, row);
         float fft_window = Window<K>::fft_window(pos);
-        chan_data[row] = (chan_data[row] - chan_mean) * fft_window;
+
+        fft_data[row].re = (chan_data[row] - chan_mean) * fft_window;
+        fft_data[row].im = 0.0f;
     }
     
-    // // Convert to complex for FFT
-    // Complex fft_data[K];
-    // #pragma unroll
-    // for (int row = 0; row < K; row++) {
-    //     fft_data[row] = Complex(chan_data[row], 0.0f);
-    // }
+
     
     // // FFT processing
-    // fft_2d<K>(fft_data);
+    fft_2d<K>(fft_data);
     
     // #pragma unroll
     // for (int row = 0; row < K; row++) {
     //     fft_data[row] = apply_gain(fft_data[row], noise_sigmas[channel]);
     // }
     
-    // ifft_2d<K>(fft_data);
+    ifft_2d<K>(fft_data);
     
     // // Store back to channel data
     // #pragma unroll
@@ -166,7 +168,7 @@ __global__ void wiener_tile_kernel(
     // }
     
     // Store channel back to output
-    store_channel<K, C>(out, mask, stride, H_pad, W_pad, col, channel, chan_data, chan_mean);
+    store_channel<K, C>(out, mask, stride, H_pad, W_pad, col, channel, fft_data, chan_mean);
 }
 
 
