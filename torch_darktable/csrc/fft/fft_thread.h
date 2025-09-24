@@ -13,17 +13,7 @@ __device__ __forceinline__ void swap(T& a, T& b) {
     b = temp;
 }
 
-// In-place transpose for NxN array stored in row-major order
-template<int N>
-__device__ __forceinline__ void transpose_inplace(Complex data[N*N]) {
-    #pragma unroll
-    for (int i = 0; i < N; i++) {
-        #pragma unroll
-        for (int j = i + 1; j < N; j++) {
-            swap(data[i * N + j], data[j * N + i]);
-        }
-    }
-}
+
 
 // Butterfly operation helper
 __device__ __forceinline__ void butterfly(Complex& a, Complex& b, const Complex& twiddle) {
@@ -33,81 +23,83 @@ __device__ __forceinline__ void butterfly(Complex& a, Complex& b, const Complex&
 }
 
 // Core FFT implementation
-template<int N>
-__device__ __forceinline__ void fft_core(Complex data[N], const Complex* twiddles) {
-    constexpr int stages = log2_constexpr(N);
+template<typename FFT>
+__device__ __forceinline__ void fft_core(Complex row[FFT::N]) {
+    constexpr int stages = log2_constexpr(FFT::N);
     
     // Bit-reverse permutation
     #pragma unroll
-    for (int i = 0; i < N; i++) {
+    for (int i = 0; i < FFT::N; i++) {
         int rev_i = __brev(i) >> (32 - stages);
-        if (i < rev_i) swap(data[i], data[rev_i]);
+        if (i < rev_i) swap(row[i], row[rev_i]);
     }
     
     // Radix-2 butterflies
     #pragma unroll
     for (int stage = 0; stage < stages; stage++) {
         int step = 1 << stage;
-        int twiddle_stride = N >> (stage + 1);
+        int twiddle_stride = FFT::N >> (stage + 1);
         
         #pragma unroll
-        for (int i = 0; i < N; i += 2 * step) {
+        for (int i = 0; i < FFT::N; i += 2 * step) {
             #pragma unroll
             for (int j = 0; j < step; j++) {
-                butterfly(data[i + j], data[i + j + step], twiddles[j * twiddle_stride]);
+                Complex twiddle = FFT::twiddle(j * twiddle_stride);
+                butterfly(row[i + j], row[i + j + step], twiddle);
             }
         }
     }
 }
 
 
+
 // Forward FFT
 template<int N>
-__device__ __forceinline__ void fft(Complex data[N]) {
-    fft_core<N>(data, get_fft_twiddles<N>());
+__device__ __forceinline__ void fft(Complex row[N]) {
+    fft_core<FFT<N>>(row);
 }
 
 // Inverse FFT
 template<int N>
-__device__ __forceinline__ void ifft(Complex data[N]) {
-    fft_core<N>(data, get_ifft_twiddles<N>());
+__device__ __forceinline__ void ifft(Complex row[N]) {
+    fft_core<IFFT<N>>(row);
     #pragma unroll
     for (int i = 0; i < N; i++) {
-        data[i] = data[i] * (1.0f / N);
+        row[i] = row[i] * (1.0f / N);
     }
 }
 
 template<int N>
-__device__ __forceinline__ void transpose_rows(Complex my_row[N]) {
-    auto warp = cg::this_thread_block();
+__device__ __forceinline__ void transpose_rows(Complex row[N]) {
+    auto warp = cg::tiled_partition<N>(cg::this_thread_block());
     int tid = warp.thread_rank();
     
     Complex temp[N];
     #pragma unroll
     for (int i = 0; i < N; i++) {
-        temp[i] = my_row[i];
+        temp[i] = row[i];
     }
     
     #pragma unroll
     for (int i = 0; i < N; i++) {
-        my_row[i] = Complex(
-            warp.shfl(temp[tid].re, i, N),
-            warp.shfl(temp[tid].im, i, N)
+        row[i] = Complex(
+            warp.shfl(temp[tid].re, i),
+            warp.shfl(temp[tid].im, i)
         );
     }
 }
 
 template<int N>
-__device__ __forceinline__ void fft_2d_rows(Complex my_row[N]) {
-    fft<N>(my_row);
-    transpose_rows<N>(my_row);
-    fft<N>(my_row);
+__device__ __forceinline__ void fft_2d(Complex row[N]) {
+    fft<N>(row);
+    transpose_rows<N>(row);
+    fft<N>(row);
 }
 
 template<int N>
-__device__ __forceinline__ void ifft_2d_rows(Complex my_row[N]) {
-    ifft<N>(my_row);
-    transpose_rows<N>(my_row);
-    ifft<N>(my_row);
+__device__ __forceinline__ void ifft_2d(Complex row[N]) {
+    ifft<N>(row);
+    transpose_rows<N>(row);
+    ifft<N>(row);
 }
 

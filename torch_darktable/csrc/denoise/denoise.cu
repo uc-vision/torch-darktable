@@ -3,8 +3,7 @@
 
 #include "reduction.h"
 #include "denoise.h"
-// #include "fft/fft_coop.h"
-#include "fft/common.h"
+#include "fft/fft_thread.h"
 #include "window.h"
 #include "cuda_utils.h"
 #include "pixel.h"
@@ -29,22 +28,6 @@ inline void upload_noise_sigmas(const torch::Tensor& noise_sigmas_tensor, cudaSt
 }
 
 
-template<int K, typename T>
-__device__ __forceinline__ T compute_tile_mean(T col_data[K]) {
-    // Each thread sums its column
-    T col_sum = {};
-    #pragma unroll
-    for (int row = 0; row < K; row++) {
-        col_sum = col_sum + col_data[row];
-    }
-    
-    // Warp sum across all threads (all columns)
-    auto warp = cg::tiled_partition<32>(cg::this_thread_block());
-    T tile_sum = cg::reduce(warp, col_sum, cg::plus<T>{});
-    
-    // Normalize by total pixels in tile (K*K)
-    return tile_sum / (K * K);
-}
 
 
 // Using custom FFT implementation
@@ -61,16 +44,16 @@ __device__ __forceinline__ int reflect_1d(int x, int limit) {
     return x;
 }
 
-template<int K, typename T>
-__device__ __forceinline__ void load_col(
-    const T* __restrict__ img,
+
+template<int K, int C>
+__device__ __forceinline__ void load_channel(
+    const float* __restrict__ img,
     int stride, int H, int W,
-    int col, T col_data[K]
+    int col, int c, float chan_data[K]
 ) {
     int2 g = get_group_pos();
     int2 grid_offset = {K / stride, K / stride};
     
-    // Column-constant calculations
     int src_x = (g.x - grid_offset.x) * stride + col;
     int refl_x = reflect_1d(src_x, W);
     
@@ -78,22 +61,21 @@ __device__ __forceinline__ void load_col(
     for (int row = 0; row < K; row++) {
         int src_y = (g.y - grid_offset.y) * stride + row;
         int refl_y = reflect_1d(src_y, H);
-        col_data[row] = img[refl_y * W + refl_x];
+        chan_data[row] = img[(refl_y * W + refl_x) * C + c];
     }
 }
 
-template<int K, typename T>
-__device__ __forceinline__ void store_col(
-    T* __restrict__ out,
+template<int K, int C>
+__device__ __forceinline__ void store_channel(
+    float* __restrict__ out,
     float* __restrict__ mask,
     int stride, int H_pad, int W_pad,
-    int col, const T col_data[K],
-    const T& mean
+    int col, int c, const float chan_data[K],
+    float chan_mean
 ) {
     int2 g = get_group_pos();
     int2 grid_offset = {K / stride, K / stride};
     
-    // Column-constant calculations
     int out_x = (g.x - grid_offset.x) * stride + col + K;    
     if (out_x >= W_pad) return;
     
@@ -107,10 +89,12 @@ __device__ __forceinline__ void store_col(
             auto interp_window = Window<K>::interp_window(pos);
             
             int out_idx = out_y * W_pad + out_x;
-            T reconstructed = (col_data[row] + mean * fft_window) * interp_window;
+            float reconstructed_chan = (chan_data[row] + chan_mean * fft_window) * interp_window;
+            atomicAdd(&out[out_idx * C + c], reconstructed_chan);
             
-            atomic_add(&out[out_idx], reconstructed);
-            atomicAdd(&mask[out_idx], fft_window * interp_window);
+            if (c == 0) {  // Only add mask once per pixel
+                atomicAdd(&mask[out_idx], fft_window * interp_window);
+            }
         }
     }
 }
@@ -125,35 +109,64 @@ __device__ __forceinline__ Complex apply_gain(Complex value, float sigma) {
 
 
 // Main kernel: orchestrates the Wiener filtering pipeline
-template<int K, typename T>
+template<int K, int C>
 __global__ void wiener_tile_kernel(
-    const T* __restrict__ img,
-    T* __restrict__ out,
+    const float* __restrict__ img,
+    float* __restrict__ out,
     float* __restrict__ mask,
     int H, int W, int H_pad, int W_pad,
-    int stride
+    int stride,
+    int channel
 ) {
     int col = threadIdx.x;  // Thread processes column 'col' (0 to K-1)
     
-    // Each thread loads one column (K pixels)
-    T col_data[K];
-    load_col<K, T>(img, stride, H, W, col, col_data);
+    // Load single channel data
+    float chan_data[K];
+    load_channel<K, C>(img, stride, H, W, col, channel, chan_data);
     
-    // Compute mean across entire tile using all threads
-    T tile_mean = compute_tile_mean<K, T>(col_data);
+    // Compute channel mean
+    float chan_sum = 0.0f;
+    #pragma unroll
+    for (int row = 0; row < K; row++) {
+        chan_sum += chan_data[row];
+    }
+    auto warp = cg::tiled_partition<32>(cg::this_thread_block());
+    float tile_chan_sum = cg::reduce(warp, chan_sum, cg::plus<float>{});
+    float chan_mean = tile_chan_sum / (K * K);
     
     // Apply windowing and subtract mean
     #pragma unroll
     for (int row = 0; row < K; row++) {
         int2 pos = make_int2(col, row);
         float fft_window = Window<K>::fft_window(pos);
-        col_data[row] = (col_data[row] - tile_mean) * fft_window;
+        chan_data[row] = (chan_data[row] - chan_mean) * fft_window;
     }
     
-    // TODO: FFT processing will go here
+    // // Convert to complex for FFT
+    // Complex fft_data[K];
+    // #pragma unroll
+    // for (int row = 0; row < K; row++) {
+    //     fft_data[row] = Complex(chan_data[row], 0.0f);
+    // }
     
-    // Store column back to output
-    store_col<K, T>(out, mask, stride, H_pad, W_pad, col, col_data, tile_mean);
+    // // FFT processing
+    // fft_2d<K>(fft_data);
+    
+    // #pragma unroll
+    // for (int row = 0; row < K; row++) {
+    //     fft_data[row] = apply_gain(fft_data[row], noise_sigmas[channel]);
+    // }
+    
+    // ifft_2d<K>(fft_data);
+    
+    // // Store back to channel data
+    // #pragma unroll
+    // for (int row = 0; row < K; row++) {
+    //     chan_data[row] = fft_data[row].re;
+    // }
+    
+    // Store channel back to output
+    store_channel<K, C>(out, mask, stride, H_pad, W_pad, col, channel, chan_data, chan_mean);
 }
 
 
@@ -235,13 +248,17 @@ private:
         // Upload noise sigmas to constant memory
         upload_noise_sigmas<pixel>(noise_sigmas, stream);
        
-        wiener_tile_kernel<K, pixel><<<grid, block, 0, stream>>>(
-            reinterpret_cast<pixel const*>(input.data_ptr<float>()),
-            reinterpret_cast<pixel*>(padded_out.data_ptr<float>()),
-            mask.data_ptr<float>(),
-            H, W, h_pad, w_pad,
-            stride
-        );
+        // Launch kernel once per channel
+        for (int c = 0; c < C; c++) {
+            wiener_tile_kernel<K, C><<<grid, block, 0, stream>>>(
+                input.data_ptr<float>(),
+                padded_out.data_ptr<float>(),
+                mask.data_ptr<float>(),
+                H, W, h_pad, w_pad,
+                stride,
+                c
+            );
+        }
 
         
         // Check for kernel launch errors

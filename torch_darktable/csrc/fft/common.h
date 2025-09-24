@@ -125,7 +125,7 @@ struct FFT;
 template<>
 struct FFT<16> {
     static constexpr int N = 16;
-    __device__ __forceinline__ static constexpr Complex get(int idx) {
+    __device__ __forceinline__ static constexpr Complex twiddle(int idx) {
         return fft_twiddles_16[idx];
     }
 };
@@ -133,7 +133,7 @@ struct FFT<16> {
 template<>
 struct FFT<32> {
     static constexpr int N = 32;
-    __device__ __forceinline__ static constexpr Complex get(int idx) {
+    __device__ __forceinline__ static constexpr Complex twiddle(int idx) {
         return fft_twiddles_32[idx];
     }
 };
@@ -145,7 +145,7 @@ struct IFFT;
 template<>
 struct IFFT<16> {
     static constexpr int N = 16;
-    __device__ __forceinline__ static constexpr Complex get(int idx) {
+    __device__ __forceinline__ static constexpr Complex twiddle(int idx) {
         return ifft_twiddles_16[idx];
     }
 };
@@ -153,7 +153,7 @@ struct IFFT<16> {
 template<>
 struct IFFT<32> {
     static constexpr int N = 32;
-    __device__ __forceinline__ static constexpr Complex get(int idx) {
+    __device__ __forceinline__ static constexpr Complex twiddle(int idx) {
         return ifft_twiddles_32[idx];
     }
 };
