@@ -83,8 +83,8 @@ __device__ __forceinline__ void transpose_rows(Complex row[N]) {
     #pragma unroll
     for (int i = 0; i < N; i++) {
         row[i] = Complex(
-            warp.shfl(temp[tid].re, i),
-            warp.shfl(temp[tid].im, i)
+            warp.shfl(temp[i].re, tid),
+            warp.shfl(temp[i].im, tid)
         );
     }
 }

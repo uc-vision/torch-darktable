@@ -120,7 +120,8 @@ __global__ void wiener_tile_kernel(
     int stride,
     int channel
 ) {
-    int col = threadIdx.x;  // Thread processes column 'col' (0 to K-1)
+    auto warp = cg::tiled_partition<32>(cg::this_thread_block());
+    int col = warp.thread_rank();   // Thread processes column 'col' (0 to K-1)
     
     // Load single channel data
     float chan_data[K];
@@ -132,7 +133,6 @@ __global__ void wiener_tile_kernel(
     for (int row = 0; row < K; row++) {
         chan_sum += chan_data[row];
     }
-    auto warp = cg::tiled_partition<32>(cg::this_thread_block());
     float tile_chan_sum = cg::reduce(warp, chan_sum, cg::plus<float>{});
     float chan_mean = tile_chan_sum / (K * K);
     
@@ -151,21 +151,16 @@ __global__ void wiener_tile_kernel(
     
 
     
-    // // FFT processing
+    // FFT processing
     fft_2d<K>(fft_data);
     
-    // #pragma unroll
-    // for (int row = 0; row < K; row++) {
-    //     fft_data[row] = apply_gain(fft_data[row], noise_sigmas[channel]);
-    // }
+    #pragma unroll
+    for (int row = 0; row < K; row++) {
+        fft_data[row] = apply_gain(fft_data[row], noise_sigmas[channel]);
+    }
     
     ifft_2d<K>(fft_data);
     
-    // // Store back to channel data
-    // #pragma unroll
-    // for (int row = 0; row < K; row++) {
-    //     chan_data[row] = fft_data[row].re;
-    // }
     
     // Store channel back to output
     store_channel<K, C>(out, mask, stride, H_pad, W_pad, col, channel, fft_data, chan_mean);
