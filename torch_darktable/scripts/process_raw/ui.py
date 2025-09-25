@@ -84,6 +84,7 @@ class ProcessRawUI:
     # JPEG display state
     self.saved_jpeg_path = None
     self.show_saved_jpeg = False
+    self.jpeg_preview = None
 
     # Output directory for JPEG files
     self.output_dir = output_dir if output_dir is not None else Path('/tmp')
@@ -222,8 +223,12 @@ class ProcessRawUI:
       0.98, 0.5, "", fontsize=8, verticalalignment='center', horizontalalignment='right', transform=ax_info.transAxes
     )
 
-    # Reset button at bottom of sidebar
-    ax_reset = create_clean_axes((sidebar_x, 0.02, sidebar_w, 0.06))
+    # Save and reset buttons at bottom of sidebar
+    button_w = sidebar_w / 2
+    ax_save = create_clean_axes((sidebar_x, 0.02, button_w, 0.06))
+    ax_reset = create_clean_axes((sidebar_x + button_w, 0.02, button_w, 0.06))
+
+    self.btn_save = Button(ax_save, 'Save JPEG')
     self.btn_reset = Button(ax_reset, 'Reset')
 
     # Set z-order for overlapping sliders
@@ -294,11 +299,9 @@ class ProcessRawUI:
 
   def _update_display_fast(self):
     """Update the image display without recreating pipeline (for navigation)."""
-    if self.show_saved_jpeg and self.saved_jpeg_path and self.saved_jpeg_path.exists():
-      # Show saved JPEG
-      jpeg_bgr = cv2.imread(str(self.saved_jpeg_path))
-      jpeg_array = cv2.cvtColor(jpeg_bgr, cv2.COLOR_BGR2RGB)
-      self.im.set_data(jpeg_array)
+    if self.show_saved_jpeg and self.jpeg_preview is not None:
+      # Show JPEG preview
+      self.im.set_data(self.jpeg_preview)
     else:
       # Show processed image
       new_img = self.pipeline.process(self.bayer_image)
@@ -323,8 +326,29 @@ class ProcessRawUI:
     psnr = 20 * np.log10(max_pixel / np.sqrt(mse))
     return psnr
 
-  def _save_jpeg(self):
-    """Save JPEG with current settings."""
+  def _encode_decode_jpeg(self):
+    """Encode and decode JPEG in memory, return the decoded image and encoded size."""
+    rgb_array = self.pipeline.process(self.bayer_image)
+    bgr_array = cv2.cvtColor(rgb_array, cv2.COLOR_RGB2BGR)
+    
+    # Set up JPEG encoding parameters
+    encode_params = [cv2.IMWRITE_JPEG_QUALITY, int(self.jpeg_quality)]
+    if self.jpeg_progressive:
+      encode_params.extend([cv2.IMWRITE_JPEG_PROGRESSIVE, 1])
+    
+    # Encode to memory
+    success, encoded_img = cv2.imencode('.jpg', bgr_array, encode_params)
+    if not success:
+      raise RuntimeError("Failed to encode JPEG")
+    
+    # Decode back to image
+    decoded_bgr = cv2.imdecode(encoded_img, cv2.IMREAD_COLOR)
+    decoded_rgb = cv2.cvtColor(decoded_bgr, cv2.COLOR_BGR2RGB)
+    
+    return decoded_rgb, len(encoded_img.tobytes())
+
+  def _save_jpeg_to_disk(self):
+    """Save JPEG to disk with current settings."""
     rgb_array = self.pipeline.process(self.bayer_image)
     bgr_array = cv2.cvtColor(rgb_array, cv2.COLOR_RGB2BGR)
     
@@ -380,26 +404,22 @@ class ProcessRawUI:
       self.saved_jpeg_path = self.output_dir / jpeg_filename
 
   def _update_jpeg_and_display(self):
-    """Save JPEG and update display with file info."""
-    self._ensure_jpeg_path()
-    
+    """Encode JPEG in memory and update display with preview info."""
     # Get original processed image for PSNR calculation
     original_rgb = self.pipeline.process(self.bayer_image)
     
-    # Save JPEG
-    self._save_jpeg()
-    
-    # Load saved JPEG and calculate PSNR
-    jpeg_bgr = cv2.imread(str(self.saved_jpeg_path))
-    jpeg_rgb = cv2.cvtColor(jpeg_bgr, cv2.COLOR_BGR2RGB)
+    # Encode/decode JPEG in memory
+    jpeg_rgb, encoded_size = self._encode_decode_jpeg()
     psnr = self._calculate_psnr(original_rgb, jpeg_rgb)
     
-    # Update file size info with PSNR
-    file_size = self.saved_jpeg_path.stat().st_size
-    file_size_mb = file_size / (1024 * 1024)
-    self._update_info_display_with_filesize(self.saved_jpeg_path.name, file_size_mb, psnr)
+    # Store the JPEG image for display
+    self.jpeg_preview = jpeg_rgb
     
-    print(f'Saved JPEG to: {self.saved_jpeg_path} (quality: {self.jpeg_quality}, progressive: {self.jpeg_progressive}, size: {file_size_mb:.2f} MB, PSNR: {psnr:.1f} dB)')
+    # Update file size info with PSNR (show estimated size)
+    file_size_mb = encoded_size / (1024 * 1024)
+    current_path = self.image_files[self.nav_state['current_index']]
+    jpeg_filename = current_path.with_suffix('.jpg').name
+    self._update_info_display_with_filesize(f"{jpeg_filename} (preview)", file_size_mb, psnr)
 
   def _setup_event_handlers(self):
     """Setup all event handlers."""
@@ -484,6 +504,17 @@ class ProcessRawUI:
       self._update_display_fast()
       self.fig.canvas.draw_idle()
 
+    def on_save_jpeg(event):
+      # Ensure JPEG path is set and save to disk
+      self._ensure_jpeg_path()
+      self._save_jpeg_to_disk()
+      
+      # Get file size
+      file_size = self.saved_jpeg_path.stat().st_size
+      file_size_mb = file_size / (1024 * 1024)
+      
+      print(f'Saved JPEG to: {self.saved_jpeg_path} (quality: {self.jpeg_quality}, progressive: {self.jpeg_progressive}, size: {file_size_mb:.2f} MB)')
+
     # Register all event handlers
     self.rb_presets.on_clicked(on_presets)
     self.rb.on_clicked(on_rb)
@@ -492,6 +523,7 @@ class ProcessRawUI:
     self.quality_slider.on_changed(on_quality_change)
     self.cb.on_clicked(on_cb)
     self.cb_jpeg_options.on_clicked(on_jpeg_options_checkbox)
+    self.btn_save.on_clicked(on_save_jpeg)
     self.btn_reset.on_clicked(on_reset)
     self.btn_prev.on_clicked(on_prev)
     self.btn_next.on_clicked(on_next)
