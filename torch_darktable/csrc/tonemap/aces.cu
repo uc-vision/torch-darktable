@@ -48,16 +48,16 @@ __global__ void aces_tonemap_kernel(
     if (x >= width || y >= height) return;
 
     int idx = y * width + x;
-    float3 rgb = float3_load(input, idx);
+    float3 rgb = load<float3>(input, idx);
 
     float3 scaled = (rgb - transform.bounds_min) / transform.range;
 
     float3 adjustment = pow(transform.adapt_mean / transform.exposure, transform.map_key);
     float3 tonemapped = aces_tonemap(scaled / adjustment);
 
-    float3 gamma_corrected = pow(fmax(tonemapped, 0.0f), 1.0f / gamma);
+    float3 gamma_corrected = pow(max(tonemapped, 0.0f), 1.0f / gamma);
     // float3_to_uint8_rgb(gamma_corrected, output, idx);
-    float3_store(gamma_corrected, output, idx);
+    store(gamma_corrected, output, idx);
 }
 
 

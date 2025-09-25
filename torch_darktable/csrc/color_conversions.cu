@@ -87,9 +87,9 @@ __global__ void convert_color_kernel(
     if(pos.x >= width || pos.y >= height) return;
 
     const int pixel_idx = pos.y * width + pos.x;
-    float3 input_px = float3_load(input, pixel_idx);
+    float3 input_px = load<float3>(input, pixel_idx);
     float3 output_px = converter(input_px);
-    float3_store(output_px, output, pixel_idx);
+    store(output_px, output, pixel_idx);
 }
 
 // Generic wrapper for color space conversion
@@ -167,7 +167,7 @@ torch::Tensor color_transform_3x3(const torch::Tensor& input, const torch::Tenso
 // Converter structs for channel extraction
 struct ExtractLuminance {
     __device__ float operator()(float3 input) const {
-        return rgb_to_lab_l(clipf(input));
+        return rgb_to_lab_l(clip(input));
     }
 };
 
@@ -177,7 +177,7 @@ struct ExtractLogLuminance {
     __device__ ExtractLogLuminance(float epsilon = 1e-6f) : eps(epsilon) {}
     
     __device__ float operator()(float3 input) const {
-        float lum = rgb_to_lab_l(clipf(input));
+        float lum = rgb_to_lab_l(clip(input));
         return logf(fmaxf(eps, lum));
     }
 };
@@ -195,7 +195,7 @@ __global__ void extract_channel_kernel(
     if(pos.x >= width || pos.y >= height) return;
 
     const int pixel_idx = pos.y * width + pos.x;
-    float3 input_px = float3_load(input, pixel_idx);
+    float3 input_px = load<float3>(input, pixel_idx);
     float result = converter(input_px);
     output[pixel_idx] = result;
 }
@@ -269,10 +269,10 @@ __global__ void modify_color_kernel(
     if(pos.x >= width || pos.y >= height) return;
 
     const int pixel_idx = pos.y * width + pos.x;
-    float3 input1_px = float3_load(input1, pixel_idx);
+    float3 input1_px = load<float3>(input1, pixel_idx);
     float input2_val = input2[pixel_idx];
     float3 result = converter(input1_px, input2_val);
-    float3_store(result, output, pixel_idx);
+    store(result, output, pixel_idx);
 }
 
 // Generic wrapper for color modification

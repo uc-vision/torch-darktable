@@ -544,7 +544,7 @@ __global__ void calc_scharr_mask_kernel(float* input, float* output, int width, 
     const float gy = 47.0f / 255.0f * (input[idx-width-1] - input[idx+width-1] + input[idx-width+1] - input[idx+width+1])
                   + 162.0f / 255.0f * (input[idx-width] - input[idx+width]);
     const float gradient_magnitude = hypotf(gx, gy);
-    output[oidx] = clipf(gradient_magnitude / 16.0f);
+    output[oidx] = clip(gradient_magnitude / 16.0f);
 }
 
 __global__ void calc_detail_blend_kernel(float* input, float* output, int width, int height, 
@@ -556,7 +556,7 @@ __global__ void calc_detail_blend_kernel(float* input, float* output, int width,
 
     const int idx = row * width + col;
 
-    const float blend = clipf(calcBlendFactor(input[idx], threshold));
+    const float blend = clip(calcBlendFactor(input[idx], threshold));
     output[idx] = detail ? blend : 1.0f - blend;
 }
 

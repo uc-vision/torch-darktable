@@ -27,104 +27,104 @@
 #include "../device_math.h"
 #include "bilateral.h"
 
+struct GridSample
+{
+    int gi;
+    int3 offset;
+    float3 frac;
+    
+    __device__ __forceinline__ GridSample(int gi_, int3 offset_, float3 frac_) 
+        : gi(gi_), offset(offset_), frac(frac_) {}
+};
 
 
 // Trilinear interpolation from 3D grid at base index gi with fractional coords f
-__device__ __forceinline__ float trilerp(const float *g, int gi, float fx, float fy, float fz, int ox, int oy, int oz)
+__device__ __forceinline__ float trilerp(const float *g, const GridSample& s)
 {
-    const float ax = 1.0f - fx, ay = 1.0f - fy, az = 1.0f - fz;
-    return g[gi]                 * ax * ay * az
-         + g[gi + ox]            * fx * ay * az
-         + g[gi + oy]            * ax * fy * az
-         + g[gi + oy + ox]       * fx * fy * az
-         + g[gi + oz]            * ax * ay * fz
-         + g[gi + oz + ox]       * fx * ay * fz
-         + g[gi + oz + oy]       * ax * fy * fz
-         + g[gi + oz + oy + ox]  * fx * fy * fz;
+    const float3 a = 1.0f - s.frac;
+    const float3 b = s.frac;
+    return g[s.gi]                              * a.x * a.y * a.z
+         + g[s.gi + s.offset.x]                 * b.x * a.y * a.z
+         + g[s.gi + s.offset.y]                 * a.x * b.y * a.z
+         + g[s.gi + s.offset.y + s.offset.x]    * b.x * b.y * a.z
+         + g[s.gi + s.offset.z]                 * a.x * a.y * b.z
+         + g[s.gi + s.offset.z + s.offset.x]    * b.x * a.y * b.z
+         + g[s.gi + s.offset.z + s.offset.y]    * a.x * b.y * b.z
+         + g[s.gi + s.offset.z + s.offset.y + s.offset.x] * b.x * b.y * b.z;
 }
 
-__device__ __forceinline__ void trilerp_add(
-    float *g, int gi, float fx, float fy, float fz, int ox, int oy, int oz, float scale)
+__device__ __forceinline__ void trilerp_add(float *g, const GridSample& s, float scale)
 {
-    const float ax = 1.0f - fx, ay = 1.0f - fy, az = 1.0f - fz;
-    const float bx = fx,        by = fy,        bz = fz;
+    const float3 a = 1.0f - s.frac;
+    const float3 b = s.frac;
 
-    atomicAdd(g + gi,                ax * ay * az * scale);
-    atomicAdd(g + gi + ox,           bx * ay * az * scale);
-    atomicAdd(g + gi + oy,           ax * by * az * scale);
-    atomicAdd(g + gi + oy + ox,      bx * by * az * scale);
-    atomicAdd(g + gi + oz,           ax * ay * bz * scale);
-    atomicAdd(g + gi + oz + ox,      bx * ay * bz * scale);
-    atomicAdd(g + gi + oz + oy,      ax * by * bz * scale);
-    atomicAdd(g + gi + oz + oy + ox, bx * by * bz * scale);
+    atomicAdd(g + s.gi,                              a.x * a.y * a.z * scale);
+    atomicAdd(g + s.gi + s.offset.x,                 b.x * a.y * a.z * scale);
+    atomicAdd(g + s.gi + s.offset.y,                 a.x * b.y * a.z * scale);
+    atomicAdd(g + s.gi + s.offset.y + s.offset.x,    b.x * b.y * a.z * scale);
+    atomicAdd(g + s.gi + s.offset.z,                 a.x * a.y * b.z * scale);
+    atomicAdd(g + s.gi + s.offset.z + s.offset.x,    b.x * a.y * b.z * scale);
+    atomicAdd(g + s.gi + s.offset.z + s.offset.y,    a.x * b.y * b.z * scale);
+    atomicAdd(g + s.gi + s.offset.z + s.offset.y + s.offset.x, b.x * b.y * b.z * scale);
 }
-
-struct GridSample
-{
-    int gi, ox, oy, oz;
-    float fx, fy, fz;
-};
 
 __device__ __forceinline__ GridSample make_grid_sample(
-    int x, int y, float L,
-    int sizex, int sizey, int sizez,
+    int2 pos, float L,
+    int3 size,
     float sigma_s, float sigma_r)
 {
     const float3 g = make_float3(
-        clampf(x / sigma_s, 0.0f, (float)(sizex - 1)),
-        clampf(y / sigma_s, 0.0f, (float)(sizey - 1)),
-        clampf(L / sigma_r, 0.0f, (float)(sizez - 1)));
-    const int3 ib = min(make_int3(g), make_int3(sizex - 2, sizey - 2, sizez - 2));
-    const float3 f = g - ib;
-    GridSample s;
-    s.gi = grid_index(ib.x, ib.y, ib.z, sizex, sizey, sizez);
-    s.ox = 1;
-    s.oy = sizex;
-    s.oz = sizex * sizey;
-    s.fx = f.x; s.fy = f.y; s.fz = f.z;
-    return s;
+        clamp(pos.x / sigma_s, 0.0f, (float)(size.x - 1)),
+        clamp(pos.y / sigma_s, 0.0f, (float)(size.y - 1)),
+        clamp(L / sigma_r, 0.0f, (float)(size.z - 1)));
+    const int3 ib = min(to_int(g), size - 2);
+    return GridSample(
+        grid_index(ib, size),
+        make_int3(1, size.x, size.x * size.y),
+        g - to_float(ib)
+    );
 }
 
 
 // Zero out a 2D slice of the 3D grid interpreted as [sizex, sizey*sizez]
-__global__ void zero_grid(float *grid, int width, int height)
+__global__ void zero_grid(float *grid, int2 image_size)
 {
     int2 pos = pixel_index();
-    if(pos.x >= width || pos.y >= height) return;
-    grid[pos.x + width * pos.y] = 0.0f;
+    if(pos.x >= image_size.x || pos.y >= image_size.y) return;
+    grid[pos.x + image_size.x * pos.y] = 0.0f;
 }
 
 
 // Splat kernel: builds the bilateral grid from luminance image
 __global__ void splat_kernel(
     const float *in, float *grid,
-    const int width, const int height,
-    const int sizex, const int sizey, const int sizez,
+    const int2 image_size,
+    const int3 size,
     const float sigma_s, const float sigma_r)
 {
     int2 pos = pixel_index();
-    if(pos.x >= width || pos.y >= height) return;
+    if(pos.x >= image_size.x || pos.y >= image_size.y) return;
 
-    const float L = in[pos.y * width + pos.x];
-    const GridSample s = make_grid_sample(pos.x, pos.y, L, sizex, sizey, sizez, sigma_s, sigma_r);
+    const float L = in[pos.y * image_size.x + pos.x];
+    const GridSample s = make_grid_sample(pos, L, size, sigma_s, sigma_r);
     const float contrib = 1.0f / (sigma_s * sigma_s);
-    trilerp_add(grid, s.gi, s.fx, s.fy, s.fz, s.ox, s.oy, s.oz, contrib);
+    trilerp_add(grid, s, contrib);
 }
 
 // Numerator splat: accumulate L * weights into grid
 __global__ void splat_num_kernel(
     const float *in, float *grid,
-    const int width, const int height,
-    const int sizex, const int sizey, const int sizez,
+    const int2 image_size,
+    const int3 size,
     const float sigma_s, const float sigma_r)
 {
     int2 pos = pixel_index();
-    if(pos.x >= width || pos.y >= height) return;
+    if(pos.x >= image_size.x || pos.y >= image_size.y) return;
 
-    const float L = in[pos.y * width + pos.x];
-    const GridSample s = make_grid_sample(pos.x, pos.y, L, sizex, sizey, sizez, sigma_s, sigma_r);
+    const float L = in[pos.y * image_size.x + pos.x];
+    const GridSample s = make_grid_sample(pos, L, size, sigma_s, sigma_r);
     const float contrib = 1.0f / (sigma_s * sigma_s);
-    trilerp_add(grid, s.gi, s.fx, s.fy, s.fz, s.ox, s.oy, s.oz, contrib * L);
+    trilerp_add(grid, s, contrib * L);
 }
 
 
@@ -207,44 +207,44 @@ __global__ void blur_line_z_kernel(
 // Slice kernel: outputs processed luminance
 __global__ void slice_kernel(
     const float *in, const float *grid, float *out,
-    const int width, const int height,
-    const int sizex, const int sizey, const int sizez,
+    const int2 image_size,
+    const int3 size,
     const float sigma_s, const float sigma_r,
     const float detail)
 {
     int2 pos = pixel_index();
-    if(pos.x >= width || pos.y >= height) return;
+    if(pos.x >= image_size.x || pos.y >= image_size.y) return;
 
-    const float L = in[pos.y * width + pos.x];
+    const float L = in[pos.y * image_size.x + pos.x];
 
     // Scale matches removal of 100x in splat: 100 * 0.04 = 4
     const float norm = -detail * sigma_r * 4.0f;
 
-    const GridSample s = make_grid_sample(pos.x, pos.y, L, sizex, sizey, sizez, sigma_s, sigma_r);
-    const float Ldiff = trilerp(grid, s.gi, s.fx, s.fy, s.fz, s.ox, s.oy, s.oz);
+    const GridSample s = make_grid_sample(pos, L, size, sigma_s, sigma_r);
+    const float Ldiff = trilerp(grid, s);
 
     const float Lout = fmaxf(0.0f, L + norm * Ldiff);
-    out[pos.y * width + pos.x] = Lout;
+    out[pos.y * image_size.x + pos.x] = Lout;
 }
 
 // Denoise: slice weighted average from two blurred grids (sum_wL, sum_w)
 __global__ void slice_denoise_kernel(
     const float *in, const float *grid_num, const float *grid_den, float *out,
-    const int width, const int height,
-    const int sizex, const int sizey, const int sizez,
+    const int2 image_size,
+    const int3 size,
     const float sigma_s, const float sigma_r, const float amount)
 {
     int2 pos = pixel_index();
-    if(pos.x >= width || pos.y >= height) return;
+    if(pos.x >= image_size.x || pos.y >= image_size.y) return;
 
-    const float L = in[pos.y * width + pos.x];
-    const GridSample s = make_grid_sample(pos.x, pos.y, L, sizex, sizey, sizez, sigma_s, sigma_r);
-    const float num = trilerp(grid_num, s.gi, s.fx, s.fy, s.fz, s.ox, s.oy, s.oz);
-    const float den = trilerp(grid_den, s.gi, s.fx, s.fy, s.fz, s.ox, s.oy, s.oz);
+    const float L = in[pos.y * image_size.x + pos.x];
+    const GridSample s = make_grid_sample(pos, L, size, sigma_s, sigma_r);
+    const float num = trilerp(grid_num, s);
+    const float den = trilerp(grid_den, s);
 
     const float denoised = (den > 1e-8f) ? (num / den) : L;
     const float Lout = (1.0f - amount) * L + amount * denoised;
-    out[pos.y * width + pos.x] = Lout;
+    out[pos.y * image_size.x + pos.x] = Lout;
 }
 
 
@@ -270,7 +270,7 @@ struct BilateralImpl : public Bilateral
         TORCH_CHECK(width > 0 && height > 0, "Invalid dimensions");
     }
 
-    std::tuple<int,int,int> compute_grid_size() const
+    int3 compute_grid_size() const
     {
         float ss = sigma_s;
         if(ss < 0.5f) ss = 0.5f;
@@ -278,22 +278,24 @@ struct BilateralImpl : public Bilateral
         // L range assumes input luminance in [0,1]
         const float L_range = 1.0f;
 
-        float gx = roundf(width  / ss);
-        float gy = roundf(height / ss);
-        float gz = roundf(L_range / sigma_r);
-        gx = fminf(fmaxf(gx, 4.0f), 3000.0f);
-        gy = fminf(fmaxf(gy, 4.0f), 3000.0f);
-        gz = fminf(fmaxf(gz, 4.0f), 50.0f);
+        float3 g = make_float3(
+            clamp(roundf(width / ss), 4.0f, 3000.0f),
+            clamp(roundf(height / ss), 4.0f, 3000.0f), 
+            clamp(roundf(L_range / sigma_r), 4.0f, 50.0f)
+        );
 
         // Effective sigmas after potential clamping
-        const float eff_sigma_s = fmaxf(height / gy, width / gx);
-        const float eff_sigma_r = L_range / gz;
+        const float eff_sigma_s = fmaxf(height / g.y, width / g.x);
+        const float eff_sigma_r = L_range / g.z;
         const float s_s = eff_sigma_s;
         const float s_r = eff_sigma_r;
-        const int sx = (int)ceilf(width  / s_s) + 1;
-        const int sy = (int)ceilf(height / s_s) + 1;
-        const int sz = (int)ceilf(L_range / s_r) + 1;
-        return {sx, sy, sz};
+        
+        int3 size = make_int3(
+            (int)ceilf(width / s_s) + 1,
+            (int)ceilf(height / s_s) + 1,
+            (int)ceilf(L_range / s_r) + 1
+        );
+        return size;
     }
 
     void invalidate_buffers()
@@ -315,37 +317,37 @@ struct BilateralImpl : public Bilateral
 
     // Host helpers for blur scheduling
     void blur_xy(torch::Tensor &src, torch::Tensor &tmp, torch::Tensor &y_out, 
-                 int sx, int sy, int sz, cudaStream_t stream)
+                 int3 size, cudaStream_t stream)
     {
-        blur_line_kernel<<<grid2d(sz, sy), block_size_2d, 0, stream>>>(
-            src.data_ptr<float>(), tmp.data_ptr<float>(), sx * sy, sx, 1, sz, sy, sx);
-        blur_line_kernel<<<grid2d(sz, sx), block_size_2d, 0, stream>>>(
-            tmp.data_ptr<float>(), y_out.data_ptr<float>(), sx * sy, 1, sx, sz, sx, sy);
+        blur_line_kernel<<<grid2d(size.z, size.y), block_size_2d, 0, stream>>>(
+            src.data_ptr<float>(), tmp.data_ptr<float>(), size.x * size.y, size.x, 1, size.z, size.y, size.x);
+        blur_line_kernel<<<grid2d(size.z, size.x), block_size_2d, 0, stream>>>(
+            tmp.data_ptr<float>(), y_out.data_ptr<float>(), size.x * size.y, 1, size.x, size.z, size.x, size.y);
     }
 
     void blur_z_gaussian(torch::Tensor &y_in, torch::Tensor &z_out, 
-                         int sx, int sy, int sz, cudaStream_t stream)
+                         int3 size, cudaStream_t stream)
     {
-        blur_line_kernel<<<grid2d(sx, sy), block_size_2d, 0, stream>>>(
-            y_in.data_ptr<float>(), z_out.data_ptr<float>(), 1, sx, sx * sy, sx, sy, sz);
+        blur_line_kernel<<<grid2d(size.x, size.y), block_size_2d, 0, stream>>>(
+            y_in.data_ptr<float>(), z_out.data_ptr<float>(), 1, size.x, size.x * size.y, size.x, size.y, size.z);
     }
 
     void blur_z_derivative(torch::Tensor &y_in, torch::Tensor &z_out, 
-                           int sx, int sy, int sz, cudaStream_t stream)
+                           int3 size, cudaStream_t stream)
     {
-        blur_line_z_kernel<<<grid2d(sx, sy), block_size_2d, 0, stream>>>(
-            y_in.data_ptr<float>(), z_out.data_ptr<float>(), 1, sx, sx * sy, sx, sy, sz);
+        blur_line_z_kernel<<<grid2d(size.x, size.y), block_size_2d, 0, stream>>>(
+            y_in.data_ptr<float>(), z_out.data_ptr<float>(), 1, size.x, size.x * size.y, size.x, size.y, size.z);
     }
 
     // Ensure buffers for detail mode (single grid + tmp)
-    void ensure_detail_buffers(int sx, int sy, int sz)
+    void ensure_detail_buffers(int3 size)
     {
         auto opts = torch::TensorOptions().device(device_).dtype(torch::kFloat32);
-        const std::vector<int64_t> required_shape = {sz, sy, sx};
+        const std::vector<int64_t> required_shape = {size.z, size.y, size.x};
         
         if (!dev_grid.defined() || dev_grid.sizes().vec() != required_shape) {
-            dev_grid = torch::empty({sz, sy, sx}, opts);
-            dev_grid_tmp = torch::empty({sz, sy, sx}, opts);
+            dev_grid = torch::empty(required_shape, opts);
+            dev_grid_tmp = torch::empty(required_shape, opts);
         }
     }
 
@@ -360,24 +362,24 @@ struct BilateralImpl : public Bilateral
         auto stream = c10::cuda::getCurrentCUDAStream();
 
         // Compute grid sizes on-the-fly and (re)allocate cached buffers if needed
-        auto [sx, sy, sz] = compute_grid_size();
-        ensure_detail_buffers(sx, sy, sz);
+        int3 grid_size = compute_grid_size();
+        ensure_detail_buffers(grid_size);
         dev_grid.zero_();
 
   
         splat_kernel<<<grid2d(width, height), block_size_2d, 0, stream.stream()>>>(
             luminance.data_ptr<float>(), dev_grid.data_ptr<float>(),
-            width, height, sx, sy, sz, sigma_s, sigma_r);
+            make_int2(width, height), grid_size, sigma_s, sigma_r);
   
         // Blur passes via helpers
-        blur_xy(dev_grid, dev_grid_tmp, dev_grid, sx, sy, sz, stream.stream());
-        blur_z_derivative(dev_grid, dev_grid_tmp, sx, sy, sz, stream.stream());
+        blur_xy(dev_grid, dev_grid_tmp, dev_grid, grid_size, stream.stream());
+        blur_z_derivative(dev_grid, dev_grid_tmp, grid_size, stream.stream());
 
         // Slice
         auto output = torch::empty({height, width}, luminance.options());
         slice_kernel<<<grid2d(width, height), block_size_2d, 0, stream.stream()>>>(
             luminance.data_ptr<float>(), dev_grid_tmp.data_ptr<float>(), output.data_ptr<float>(),
-            width, height, sx, sy, sz, sigma_s, sigma_r, detail);
+            make_int2(width, height), grid_size, sigma_s, sigma_r, detail);
 
         return output;
     }

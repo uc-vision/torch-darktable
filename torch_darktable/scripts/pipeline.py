@@ -28,7 +28,7 @@ class Settings:
   use_white_balance: bool = False
   use_laplacian: bool = False
 
-  bilateral_detail: float = 0.2
+  bilateral_detail: float = 0.4
   bilateral_sigma_s: float = 2.0
   bilateral_sigma_r: float = 0.2
   ppg_median_threshold: float = 0.0

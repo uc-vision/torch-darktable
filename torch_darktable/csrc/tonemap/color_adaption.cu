@@ -24,7 +24,7 @@ __global__ void compute_bounds_kernel(
   if (x < width && y < height) {
       // RGB image: (height, width, 3)
       int pixel_idx = y * width + x;
-      float3 rgb = float3_load(image, pixel_idx);
+      float3 rgb = load<float3>(image, pixel_idx);
       
       float local_min = fminf(fminf(rgb.x, rgb.y), rgb.z);
       float local_max = fmaxf(fmaxf(rgb.x, rgb.y), rgb.z);
@@ -53,7 +53,7 @@ __global__ void compute_metrics_kernel(
   
   // Load RGB pixel
   int pixel_idx = y * width + x;
-  float3 rgb = float3_load(image, pixel_idx);
+  float3 rgb = load<float3>(image, pixel_idx);
   
   // Scale to [0,1] range
   float range = bounds[1] - bounds[0] + eps;

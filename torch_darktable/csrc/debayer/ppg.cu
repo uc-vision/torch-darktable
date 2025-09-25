@@ -93,7 +93,7 @@ __global__ void pre_median_kernel(
     for(int i = 0; i < 8; i++)
         #pragma unroll
         for(int ii = i + 1; ii < 9; ii++)
-            if(med[i] > med[ii]) swap_floats(med[i], med[ii]);
+            if(med[i] > med[ii]) swap(med[i], med[ii]);
 
     const float center = centered_median[0];
     float color;

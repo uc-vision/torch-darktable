@@ -87,7 +87,7 @@ __global__ void bilinear5x5(
           const int2 d = offsets[k];
 
           const int2 c = p + d;
-          const float v = input[clamp(c.y, 0, height - 1) * width + clamp(c.x, 0, width - 1)];
+          const float v = input[max(0, min(c.y, height - 1)) * width + max(0, min(c.x, width - 1))];
 
           const float3 w = diamond_kernels[pixel_type][k];
           acc_r += w * v;

@@ -207,21 +207,21 @@ __device__ float rgb_to_lab_l(float3 rgb) {
 }
 
 __device__ float3 color_transform_3x3(float3 color, const float3x3& matrix) {
-    return clipf(matrix * color);
+    return clip(matrix * color);
 }
 
 __device__ float3 modify_rgb_luminance(float3 rgb, float luminance) {
     float3 lab = rgb_to_lab(rgb);
     float clamped = fmaxf(0.0f, fminf(1.0f, luminance));
     float3 new_lab = make_float3(clamped, lab.y, lab.z);  // L is now 0-1 range
-    return clipf(lab_to_rgb(new_lab));
+    return clip(lab_to_rgb(new_lab));
 }
 
 __device__ float3 modify_rgb_log_luminance(float3 rgb, float log_luminance, float eps) {
     float3 lab = rgb_to_lab(rgb);
     float lum = fmaxf(0.0f, fminf(1.0f, expf(log_luminance)));
     float3 new_lab = make_float3(lum, lab.y, lab.z);  // L is now 0-1 range
-    return clipf(lab_to_rgb(new_lab));
+    return clip(lab_to_rgb(new_lab));
 }
 
 __device__ float3 modify_rgb_hsl(float3 rgb, float hue_adjust = 0.0f, float sat_adjust = 0.0f, float lum_adjust = 0.0f) {
@@ -235,7 +235,7 @@ __device__ float3 modify_rgb_hsl(float3 rgb, float hue_adjust = 0.0f, float sat_
     float new_l = pow(hsl.z, 1.0f / (1.0f + lum_adjust));
     
     float3 new_hsl = make_float3(new_h, new_s, new_l);
-    return clipf(hsl_to_rgb(new_hsl));
+    return clip(hsl_to_rgb(new_hsl));
 }
 
 // Darktable-style vibrance - perceptually superior to HSL saturation
@@ -257,5 +257,5 @@ __device__ float3 modify_rgb_vibrance_dt(float3 rgb, float amount = 0.0f) {
     float new_b = lab.z * ss;
     
     float3 new_lab = make_float3(new_l, new_a, new_b);
-    return clipf(lab_to_rgb(new_lab));
+    return clip(lab_to_rgb(new_lab));
 }

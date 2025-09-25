@@ -29,7 +29,7 @@ __global__ void reinhard_tonemap_kernel(
        
     // Load input pixel
     int idx = y * width + x;
-    float3 rgb = float3_load(input, idx);
+    float3 rgb = load<float3>(input, idx);
     
     // Scale to [0,1] range
     float3 scaled = (rgb - transform.bounds_min) / transform.range;
@@ -39,8 +39,8 @@ __global__ void reinhard_tonemap_kernel(
     float3 tonemapped = scaled / (adapt + scaled);    
 
     // Apply gamma correction and convert to 8-bit
-    float3 gamma_corrected = pow(fmax(tonemapped, 0.0f), 1.0f / gamma);
-    float3_store(gamma_corrected, output, idx);
+    float3 gamma_corrected = pow(max(tonemapped, 0.0f), 1.0f / gamma);
+    store(gamma_corrected, output, idx);
 }
 
 

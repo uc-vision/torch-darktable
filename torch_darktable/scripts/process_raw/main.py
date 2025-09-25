@@ -20,11 +20,14 @@ def parse_args():
   parser.add_argument(
     '--camera', type=str, default=None, help='Camera name (one of ' + ', '.join(camera_settings.keys()) + ')'
   )
+  parser.add_argument(
+    '--output-dir', type=Path, default=None, help='Output directory for JPEG files (default: /tmp)'
+  )
 
   return parser.parse_args()
 
 
-def interactive_debayer(image_files: list[Path], current_index: int, camera_settings: CameraSettings) -> None:
+def interactive_debayer(image_files: list[Path], current_index: int, camera_settings: CameraSettings, output_dir: Path = None) -> None:
   """Interactive raw image processing with navigation."""
   
   # Load initial image
@@ -32,7 +35,7 @@ def interactive_debayer(image_files: list[Path], current_index: int, camera_sett
   device = bayer_image.device
 
   # Create and show UI
-  ui = ProcessRawUI(image_files, current_index, camera_settings, bayer_image, device)
+  ui = ProcessRawUI(image_files, current_index, camera_settings, bayer_image, device, output_dir)
   ui.show()
 
 
@@ -55,7 +58,11 @@ def main():
   if len(image_files) > 1:
     print(f'Found {len(image_files)} images with extension {args.input.suffix}')
 
-  interactive_debayer(image_files, current_index, cam_settings)
+  # Print output directory info
+  output_dir = args.output_dir if args.output_dir is not None else Path('/tmp')
+  print(f'JPEG files will be saved to: {output_dir.absolute()}')
+
+  interactive_debayer(image_files, current_index, cam_settings, args.output_dir)
 
 
 if __name__ == '__main__':

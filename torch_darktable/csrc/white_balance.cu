@@ -38,7 +38,7 @@ __global__ void apply_white_balance_kernel(
     }
     
     // Apply gain and clamp to prevent overflow
-    bayer[idx] = clampf(pixel_value * gain, 0.0f, 1.0f);
+    bayer[idx] = clamp(pixel_value * gain, 0.0f, 1.0f);
 }
 
 

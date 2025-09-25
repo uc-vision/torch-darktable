@@ -9,7 +9,6 @@
 #include <c10/cuda/CUDAStream.h>
 
 __device__ __constant__ ColorTransform transform;
-__device__ __constant__ float lower, upper;
 
 // ACES tone mapping kernel  
 __global__ void linear_tonemap_kernel(
@@ -25,32 +24,17 @@ __global__ void linear_tonemap_kernel(
     if (x >= width || y >= height) return;
 
     int idx = y * width + x;
-    float3 rgb = float3_load(input, idx);
+    float3 rgb = load<float3>(input, idx);
 
     float3 scaled = (rgb - transform.bounds_min) / transform.range;
     float3 adapt = pow(transform.adapt_mean / transform.exposure, transform.map_key);
 
     float3 tonemapped = scaled / adapt; 
-    float3_store(tonemapped, output, idx);
+    float3 gamma_corrected = pow(max(tonemapped, 0.0f), 1.0f / gamma);
+
+    store(clamp(gamma_corrected, 0.0f, 1.0f), output, idx);
 }
 
-__global__ void apply_gamma_kernel(
-    float* __restrict__ image,
-    float gamma,
-    int height,
-    int width
-) {
-    int x = blockIdx.x * blockDim.x + threadIdx.x;
-    int y = blockIdx.y * blockDim.y + threadIdx.y;
-    
-    if (x >= width || y >= height) return;
-    
-    int idx = y * width + x;
-    float3 rgb = (float3_load(image, idx) - lower) / (upper - lower);
-
-    float3 gamma_corrected = pow(fmax(rgb, 0.0f), 1.0f / gamma);
-    float3_store(gamma_corrected, image, idx);
-}
 
 // Single struct-based implementation
 torch::Tensor linear_tonemap(
@@ -81,18 +65,6 @@ torch::Tensor linear_tonemap(
         width
     );
 
-    auto bounds = compute_image_bounds({output}, 4);
-    float* bounds_ptr = bounds.data_ptr<float>();
-
-    CUDA_CHECK(cudaMemcpyToSymbolAsync(lower, bounds_ptr, sizeof(float), 0, cudaMemcpyDeviceToDevice, stream));
-    CUDA_CHECK(cudaMemcpyToSymbolAsync(upper, bounds_ptr + 1, sizeof(float), 0, cudaMemcpyDeviceToDevice, stream));
-    
-    apply_gamma_kernel<<<grid_size, block_size, 0, stream>>>(
-        output.data_ptr<float>(),
-        params.gamma,
-        height,
-        width
-    );
 
     CUDA_CHECK_KERNEL();
     return output;
