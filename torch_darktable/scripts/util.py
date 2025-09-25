@@ -20,6 +20,20 @@ class ImageTransform(Enum):
   flip_vert = 'flip_vert'
   transverse = 'transverse'
 
+  def next_rotation(self) -> 'ImageTransform':
+    """Return the next rotation in 90-degree increments."""
+    rotation_map = {
+      ImageTransform.none: ImageTransform.rotate_90,
+      ImageTransform.rotate_90: ImageTransform.rotate_180,
+      ImageTransform.rotate_180: ImageTransform.rotate_270,
+      ImageTransform.rotate_270: ImageTransform.none,
+      ImageTransform.transpose: ImageTransform.flip_horiz,
+      ImageTransform.flip_horiz: ImageTransform.flip_vert,
+      ImageTransform.flip_vert: ImageTransform.transverse,
+      ImageTransform.transverse: ImageTransform.transpose,
+    }
+    return rotation_map.get(self, ImageTransform.rotate_90)
+
 
 @beartype
 @dataclass

@@ -12,7 +12,7 @@ import torch_darktable as td
 from torch_darktable.local_contrast import LaplacianParams
 from torch_darktable.tonemap import TonemapParameters
 
-from .util import CameraSettings, transform, transformed_size
+from .util import CameraSettings, ImageTransform, transform, transformed_size
 
 
 @beartype
@@ -47,6 +47,7 @@ class Settings:
   laplacian_clarity: float = 0.2
 
 
+
 @beartype
 class ImagePipeline:
   """Image processing pipeline that can process images according to configurable settings."""
@@ -76,6 +77,15 @@ class ImagePipeline:
       use_bilateral=False,
       use_postprocess=False,
       tonemap=TonemapParameters(gamma=1.0, intensity=0.0, light_adapt=1.0)),
+
+    'pfr_mobile': Settings(
+      use_wiener=True,
+      use_bilateral=True,
+      use_postprocess=True,
+      tonemap=TonemapParameters(gamma=2.2, intensity=2.5, light_adapt=0.8),
+      tonemap_method='aces',
+      vibrance=0.0,
+    ),
   }
 
   def __init__(self, device: torch.device, camera_settings: CameraSettings, settings: Settings):
@@ -141,7 +151,8 @@ class ImagePipeline:
       self.laplacian_workspace = td.create_laplacian(self.device, self.rgb_size, laplacian_params)
 
   @beartype
-  def process(self, bayer_image: torch.Tensor, white_balance: torch.Tensor | None = None) -> np.ndarray:
+  def process(self, bayer_image: torch.Tensor, white_balance: torch.Tensor | None = None, 
+              user_transform: ImageTransform = ImageTransform.none) -> np.ndarray:
     """Process a bayer image according to the pipeline settings.
 
     Args:
@@ -183,7 +194,7 @@ class ImagePipeline:
     bounds = td.compute_image_bounds([rgb_raw], stride=4)
     rgb_raw = (rgb_raw - bounds[0]) / (bounds[1] - bounds[0])
 
-    # Apply camera transform after debayer
+    # Apply camera transform after debayerI
     rgb_raw = transform(rgb_raw, self.camera_settings.transform)
 
     if self.settings.use_wiener:
@@ -218,5 +229,8 @@ class ImagePipeline:
     # Apply vibrance adjustment
     if self.settings.vibrance != 0.0:
       rgb_tm = td.modify_vibrance(rgb_tm, amount=self.settings.vibrance * 4)
+
+    # Apply user transform at the end
+    rgb_tm = transform(rgb_tm, user_transform)
 
     return (rgb_tm * 255.0).to(torch.uint8).cpu().numpy()
