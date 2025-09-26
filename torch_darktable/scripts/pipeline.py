@@ -47,17 +47,12 @@ class Settings:
   laplacian_clarity: float = 0.2
 
 
-
 @beartype
 class ImagePipeline:
   """Image processing pipeline that can process images according to configurable settings."""
 
   presets: ClassVar[dict[str, Settings]] = {
-    'reinhard': Settings(
-        use_bilateral=True,
-        use_postprocess=True,
-        use_wiener=True),
-
+    'reinhard': Settings(use_bilateral=True, use_postprocess=True, use_wiener=True),
     'aces': Settings(
       tonemap_method='aces',
       tonemap=TonemapParameters(gamma=1.5, intensity=1.0),
@@ -66,18 +61,14 @@ class ImagePipeline:
       use_bilateral=True,
       vibrance=0.25,
     ),
-    'uc_current': Settings(
-        debayer='bilinear',
-        use_wiener=False,
-        use_bilateral=False),
-
+    'uc_current': Settings(debayer='bilinear', use_wiener=False, use_bilateral=False),
     'pfr_current': Settings(
       debayer='opencv',
       use_wiener=False,
       use_bilateral=False,
       use_postprocess=False,
-      tonemap=TonemapParameters(gamma=1.0, intensity=0.0, light_adapt=1.0)),
-
+      tonemap=TonemapParameters(gamma=1.0, intensity=0.0, light_adapt=1.0),
+    ),
     'pfr_mobile': Settings(
       use_wiener=True,
       use_bilateral=True,
@@ -118,9 +109,7 @@ class ImagePipeline:
       )
 
     if settings.debayer == 'rcd':
-      self.rcd_workspace = td.create_rcd(
-        self.device, self.bayer_size, self.camera_settings.bayer_pattern
-      )
+      self.rcd_workspace = td.create_rcd(self.device, self.bayer_size, self.camera_settings.bayer_pattern)
 
     if settings.debayer == 'ppg':
       self.ppg_workspace = td.create_ppg(
@@ -146,13 +135,17 @@ class ImagePipeline:
         sigma=settings.laplacian_sigma,
         shadows=settings.laplacian_shadows,
         highlights=settings.laplacian_highlights,
-        clarity=settings.laplacian_clarity
+        clarity=settings.laplacian_clarity,
       )
       self.laplacian_workspace = td.create_laplacian(self.device, self.rgb_size, laplacian_params)
 
   @beartype
-  def process(self, bayer_image: torch.Tensor, white_balance: torch.Tensor | None = None, 
-              user_transform: ImageTransform = ImageTransform.none) -> np.ndarray:
+  def process(
+    self,
+    bayer_image: torch.Tensor,
+    white_balance: torch.Tensor | None = None,
+    user_transform: ImageTransform = ImageTransform.none,
+  ) -> np.ndarray:
     """Process a bayer image according to the pipeline settings.
 
     Args:
@@ -168,7 +161,6 @@ class ImagePipeline:
       bayer_input = td.apply_white_balance(
         bayer_image, white_balance / bayer_image.max(), self.camera_settings.bayer_pattern
       )
-
 
     # Debayer
     if self.settings.debayer == 'bilinear':
@@ -200,7 +192,6 @@ class ImagePipeline:
     if self.settings.use_wiener:
       assert self.wiener_workspace is not None
       rgb_raw = self.wiener_workspace.process_log_luminance(rgb_raw, self.settings.wiener_sigma)
-
 
     # Bilateral filtering
     if self.settings.use_bilateral:

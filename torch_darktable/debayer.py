@@ -47,7 +47,6 @@ def create_rcd(
   device: torch.device,
   image_size: tuple[int, int],
   bayer_pattern: BayerPattern,
-
 ) -> extension.RCD:
   """
   Create an RCD demosaic object.
@@ -90,7 +89,9 @@ def create_postprocess(
 
 # 12-bit packing/unpacking functions
 @beartype
-def encode(image: torch.Tensor, format_type: PackedFormat = PackedFormat.Packed12, dtype: torch.dtype = torch.float32) -> torch.Tensor:
+def encode(
+  image: torch.Tensor, format_type: PackedFormat = PackedFormat.Packed12, dtype: torch.dtype = torch.float32
+) -> torch.Tensor:
   """
   Encode image data to 12-bit packed format.
 
@@ -102,7 +103,7 @@ def encode(image: torch.Tensor, format_type: PackedFormat = PackedFormat.Packed1
       Packed 12-bit data as uint8 tensor
   """
   assert dtype in {torch.float32, torch.uint16}
-  
+
   ids = format_type is PackedFormat.Packed12_IDS
   if image.dtype == torch.uint16:
     return extension.encode12_u16(image, ids_format=ids)

@@ -2,15 +2,12 @@ from dataclasses import replace
 from pathlib import Path
 from typing import get_args
 
-import cv2
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Button, CheckButtons, RadioButtons, Slider
-import numpy as np
 
 from torch_darktable.scripts.pipeline import ImagePipeline, Settings
-from torch_darktable.scripts.util import load_raw_image, ImageTransform
-from torch_darktable.scripts.process_raw.display_pipeline import DisplayLayer
-  
+from torch_darktable.scripts.process_raw.display_layer import DisplayLayer, DisplayMode
+from torch_darktable.scripts.util import load_raw_image
 
 
 def field(name):
@@ -54,18 +51,44 @@ def create_axes_vertical(n, x=0.08, w=0.13, h=0.015, y_top=0.51, y_bottom=0.25):
   return axes
 
 
-def create_radio_buttons(rect, options, active_option):
+def create_radio_buttons(rect, options, active_option, orientation='vertical'):
   """Create radio buttons with given options and active selection."""
   ax = plt.axes(rect)
   active_index = options.index(active_option)
-  return RadioButtons(ax, options, active=active_index)
+  
+  if orientation == 'horizontal':
+    # For horizontal layout, we need to adjust the radio button positioning
+    rb = RadioButtons(ax, options, active=active_index)
+    # Adjust circle positions for horizontal layout
+    num_options = len(options)
+    for i, circle in enumerate(rb.circles):
+      # Position circles horizontally
+      x_pos = (i + 0.5) / num_options
+      circle.center = (x_pos, 0.5)
+    
+    # Adjust label positions for horizontal layout  
+    for i, label in enumerate(rb.labels):
+      x_pos = (i + 0.5) / num_options
+      label.set_position((x_pos, 0.2))
+      label.set_horizontalalignment('center')
+    
+    return rb
+  else:
+    return RadioButtons(ax, options, active=active_index)
 
 
 class ProcessRawUI:
   """UI for the interactive raw image processing."""
 
-  def __init__(self, image_files: list[Path], current_index: int, camera_settings,
-               bayer_image, device, output_dir: Path | None = None):
+  def __init__(
+    self,
+    image_files: list[Path],
+    current_index: int,
+    camera_settings,
+    bayer_image,
+    device,
+    output_dir: Path | None = None,
+  ):
     self.image_files = image_files
     self.nav_state = {'current_index': current_index}
     self.camera_settings = camera_settings
@@ -75,13 +98,16 @@ class ProcessRawUI:
     self.settings = ImagePipeline.presets[camera_settings.preset]
     self.current_preset = camera_settings.preset
 
-    # Store references for navigation updates  
+    # Store references for navigation updates
     self.bayer_image = bayer_image
     self._create_pipeline()
 
     # JPEG settings
     self.jpeg_quality = 95
     self.jpeg_progressive = False
+
+    # Histogram settings
+    self.histogram_channel_mode = 'all'  # 'all', 'red', 'green', 'blue'
 
     # Output directory for JPEG files
     self.output_dir = output_dir if output_dir is not None else Path('/tmp')
@@ -97,8 +123,9 @@ class ProcessRawUI:
 
     # UI components
     self.fig = None
-    self.ax = None
-    self.im = None
+    self.main_display_area = None  # Either image axes or histogram axis
+    self.current_display_type = None  # 'image' or 'histogram'
+    self.im = None  # For image display
 
     self._setup_ui()
 
@@ -106,7 +133,7 @@ class ProcessRawUI:
     """Create the display layer with current settings."""
     base_pipeline = ImagePipeline(self.device, self.camera_settings, self.settings)
     self.display_layer = DisplayLayer(base_pipeline)
-  
+
   def _update_base_pipeline(self):
     """Update the base pipeline while preserving display layer state."""
     # Replace just the base pipeline, keeping display state
@@ -122,22 +149,18 @@ class ProcessRawUI:
     """Create the matplotlib UI."""
     current_path = self.image_files[self.nav_state['current_index']]
     result = self.display_layer.process_for_display(
-      self.bayer_image, 
-      current_path,
-      jpeg_mode=False,
-      jpeg_quality=self.jpeg_quality,
-      jpeg_progressive=self.jpeg_progressive
+      self.bayer_image, self.camera_settings, DisplayMode.NORMAL
     )
     rgb_np = result.image
 
-    self.fig, self.ax = plt.subplots(figsize=(12, 8))
+    self.fig = plt.figure(figsize=(12, 8))
     plt.subplots_adjust(left=0.25, right=0.99, top=0.99, bottom=0.01)
-    self.im = self.ax.imshow(rgb_np, interpolation='nearest')
-    self.ax.set_aspect('equal', adjustable='box')
-    self.ax.set_axis_off()
     
+    # Initialize with image display
+    self._setup_image_display(rgb_np)
+
     # Set initial figure window title
-    self.fig.canvas.manager.set_window_title(result.window_title)
+    self.fig.canvas.manager.set_window_title(current_path.name)
 
     # Left sidebar controls
     sidebar_x = 0.02
@@ -164,19 +187,19 @@ class ProcessRawUI:
     # Hide the value text to avoid layout issues
     self.stride_slider.valtext.set_visible(False)
 
-    # Radio button groups
+    # Radio button groups (horizontal)
     available_presets = list(ImagePipeline.presets.keys())
-    self.rb_presets = create_radio_buttons((sidebar_x, 0.84, sidebar_w, 0.06), available_presets, self.current_preset)
+    self.rb_presets = create_radio_buttons((sidebar_x, 0.91, sidebar_w, 0.03), available_presets, self.current_preset, 'horizontal')
 
     debayer_options = get_args(Settings.__annotations__['debayer'])
-    self.rb = create_radio_buttons((sidebar_x, 0.74, sidebar_w, 0.06), debayer_options, self.settings.debayer)
+    self.rb = create_radio_buttons((sidebar_x, 0.87, sidebar_w, 0.03), debayer_options, self.settings.debayer, 'horizontal')
 
     tonemap_options = get_args(Settings.__annotations__['tonemap_method'])
-    self.rb_tm = create_radio_buttons((sidebar_x, 0.66, sidebar_w, 0.06), tonemap_options, self.settings.tonemap_method)
+    self.rb_tm = create_radio_buttons((sidebar_x, 0.83, sidebar_w, 0.03), tonemap_options, self.settings.tonemap_method, 'horizontal')
 
     # Checkboxes (removed white_balance)
     checkbox_labels = ('postprocess', 'wiener', 'bilateral', 'laplacian')
-    ax_checks = plt.axes((sidebar_x, 0.58, sidebar_w, 0.08))
+    ax_checks = plt.axes((sidebar_x, 0.75, sidebar_w, 0.08))
     self.cb = CheckButtons(
       ax_checks,
       checkbox_labels,
@@ -189,16 +212,32 @@ class ProcessRawUI:
     )
     self.checkbox_labels = checkbox_labels
 
-    # JPEG options checkboxes (combined)
-    ax_jpeg_options = plt.axes((sidebar_x, 0.135, sidebar_w, 0.04))
-    self.cb_jpeg_options = CheckButtons(ax_jpeg_options, ['Show JPEG', 'Progressive'], [False, False])
+    # Display mode radio buttons (horizontal)
+    display_modes = ['Normal', 'JPEG', 'Levels']
+    self.rb_display = create_radio_buttons((sidebar_x, 0.15, sidebar_w, 0.03), display_modes, 'Normal', 'horizontal')
+
+    # Histogram channel selection (horizontal, only relevant in Levels mode)
+    channel_modes = ['All', 'Red', 'Green', 'Blue']
+    self.rb_histogram_channels = create_radio_buttons((sidebar_x, 0.11, sidebar_w, 0.03), channel_modes, 'All', 'horizontal')
+
+    # Progressive JPEG checkbox (only relevant in JPEG mode)
+    ax_progressive = plt.axes((sidebar_x, 0.07, sidebar_w, 0.02))
+    self.cb_progressive = CheckButtons(ax_progressive, ['Progressive'], [False])
 
     # Sliders
     (
-      ax_gamma, ax_light, ax_detail, ax_bil_sigma_s, ax_bil_sigma_r,
-      ax_wiener_sigma, ax_intensity, ax_vibrance, ax_lap_shadows,
-      ax_lap_highlights, ax_lap_clarity
-    ) = create_axes_vertical(11, x=sidebar_x + 0.06, w=sidebar_w - 0.07)
+      ax_gamma,
+      ax_light,
+      ax_detail,
+      ax_bil_sigma_s,
+      ax_bil_sigma_r,
+      ax_wiener_sigma,
+      ax_intensity,
+      ax_vibrance,
+      ax_lap_shadows,
+      ax_lap_highlights,
+      ax_lap_clarity,
+    ) = create_axes_vertical(11, x=sidebar_x + 0.06, w=sidebar_w - 0.07, y_top=0.66, y_bottom=0.18)
 
     # Tonemap group
     self.gamma = Slider(ax_gamma, 'gamma', 0.1, 3.0, valinit=self.settings.tonemap.gamma)
@@ -206,12 +245,8 @@ class ProcessRawUI:
 
     # Bilateral group
     self.detail = Slider(ax_detail, 'bil_detail', 0.0, 2.0, valinit=self.settings.bilateral_detail)
-    self.bil_sigma_s = Slider(
-      ax_bil_sigma_s, 'bil_sigma_s', 0.1, 20.0, valinit=self.settings.bilateral_sigma_s
-    )
-    self.bil_sigma_r = Slider(
-      ax_bil_sigma_r, 'bil_sigma_r', 0.01, 1.0, valinit=self.settings.bilateral_sigma_r
-    )
+    self.bil_sigma_s = Slider(ax_bil_sigma_s, 'bil_sigma_s', 0.1, 20.0, valinit=self.settings.bilateral_sigma_s)
+    self.bil_sigma_r = Slider(ax_bil_sigma_r, 'bil_sigma_r', 0.01, 1.0, valinit=self.settings.bilateral_sigma_r)
 
     # Wiener group
     self.wiener = Slider(ax_wiener_sigma, 'wiener_sigma', 0.001, 0.5, valinit=self.settings.wiener_sigma)
@@ -227,19 +262,25 @@ class ProcessRawUI:
     )
     self.lap_clarity = Slider(ax_lap_clarity, 'lap_clarity', -1.0, 1.0, valinit=self.settings.laplacian_clarity)
 
-    # JPEG quality slider
-    ax_quality = create_clean_axes((sidebar_x + 0.06, 0.12, sidebar_w - 0.07, 0.015), for_slider=True)
+    # JPEG quality slider (only relevant in JPEG mode)
+    ax_quality = create_clean_axes((sidebar_x + 0.06, 0.105, sidebar_w - 0.07, 0.015), for_slider=True)
     self.quality_slider = Slider(ax_quality, 'jpeg_quality', 1, 100, valinit=self.jpeg_quality, valfmt='%d')
 
     # Image info display (horizontal layout)
     ax_info = create_clean_axes((sidebar_x, 0.09, sidebar_w, 0.02), axis_off=True)
     h, w = result.image.shape[:2]
-    info_text = f"{w}x{h}"
+    info_text = f'{w}x{h}'
     self.info_text_left = ax_info.text(
       0.02, 0.5, info_text, fontsize=8, verticalalignment='center', transform=ax_info.transAxes
     )
     self.info_text_right = ax_info.text(
-      0.98, 0.5, result.display_info, fontsize=8, verticalalignment='center', horizontalalignment='right', transform=ax_info.transAxes
+      0.98,
+      0.5,
+      result.display_info,
+      fontsize=8,
+      verticalalignment='center',
+      horizontalalignment='right',
+      transform=ax_info.transAxes,
     )
 
     # Save and reset buttons at bottom of sidebar
@@ -271,8 +312,41 @@ class ProcessRawUI:
 
     self._setup_event_handlers()
 
+  def _setup_image_display(self, rgb_image):
+    """Setup the main area for image display."""
+    if self.main_display_area is not None:
+      self.main_display_area.remove()
+    
+    # Create single axes for image display
+    self.main_display_area = self.fig.add_axes([0.25, 0.01, 0.74, 0.98])
+    self.im = self.main_display_area.imshow(rgb_image, interpolation='nearest')
+    self.main_display_area.set_aspect('equal', adjustable='box')
+    self.main_display_area.set_axis_off()
+    self.current_display_type = 'image'
+
+  def _setup_histogram_display(self, bayer_image, camera_settings):
+    """Setup the main area for histogram display."""
+    if self.main_display_area is not None:
+      self.main_display_area.remove()
+    self.im = None
+    
+    # Create single axes for overlaid histogram display
+    self.main_display_area = self.fig.add_axes([0.25, 0.01, 0.74, 0.98])
+    
+    # Create histograms using the histogram module
+    from .histogram_display import create_histograms
+    create_histograms(self.main_display_area, bayer_image, camera_settings, self.histogram_channel_mode)
+    
+    self.current_display_type = 'histogram'
+
+  def _get_channel_means(self, bayer_image, camera_settings):
+    """Get mean values for RGB channels."""
+    from .histogram_display import get_channel_means
+    return get_channel_means(bayer_image, camera_settings)
+
   def _make_param_handler(self, getter, setter):
     """Create parameter change handler."""
+
     def handler(val):
       self.settings = setter(self.settings, float(val))
       # Update the modified preset for current preset
@@ -281,6 +355,7 @@ class ProcessRawUI:
       self._update_base_pipeline()
       self._update_display_fast()
       self.fig.canvas.draw_idle()
+
     return handler
 
   def _sync_ui_from_settings(self, settings_obj):
@@ -300,27 +375,55 @@ class ProcessRawUI:
     self.cb.set_active(2, settings_obj.use_bilateral)
     self.cb.set_active(3, settings_obj.use_laplacian)
 
-
   def _update_display_fast(self):
-    """Update the image display."""
+    """Update the display according to the current mode."""
     current_path = self.image_files[self.nav_state['current_index']]
-    show_jpeg, _ = self.cb_jpeg_options.get_status()
-    
-    result = self.display_layer.process_for_display(
-      self.bayer_image, 
-      current_path,
-      jpeg_mode=show_jpeg,
-      jpeg_quality=self.jpeg_quality,
-      jpeg_progressive=self.jpeg_progressive
-    )
-    
-    self.im.set_data(result.image)
-    h, w = result.image.shape[:2]
-    self.im.set_extent([0, w, h, 0])
-    self.fig.canvas.manager.set_window_title(result.window_title)
-    self.info_text_right.set_text(result.display_info)
 
+    # Get display mode from radio buttons
+    display_mode_text = self.rb_display.value_selected
+    display_mode_map = {'Normal': DisplayMode.NORMAL, 'JPEG': DisplayMode.JPEG, 'Levels': DisplayMode.LEVELS}
+    display_mode = display_mode_map.get(display_mode_text, DisplayMode.NORMAL)
 
+    if display_mode == DisplayMode.LEVELS:
+      # Switch to histogram display
+      if self.current_display_type != 'histogram':
+        self._setup_histogram_display(self.bayer_image, self.camera_settings)
+      else:
+        # Update existing histogram
+        # Clear and redraw histogram
+        self.main_display_area.clear()
+        
+        from .histogram_display import create_histograms
+        create_histograms(self.main_display_area, self.bayer_image, self.camera_settings, self.histogram_channel_mode)
+      
+      # Update info text with channel means
+      r_mean, g_mean, b_mean = self._get_channel_means(self.bayer_image, self.camera_settings)
+      display_info = f'R: μ={r_mean:.3f} | G: μ={g_mean:.3f} | B: μ={b_mean:.3f}'
+      
+    else:
+      # Process image for Normal or JPEG mode
+      progressive_checked = self.cb_progressive.get_status()[0]
+      result = self.display_layer.process_for_display(
+        self.bayer_image,
+        self.camera_settings,
+        display_mode,
+        jpeg_quality=self.jpeg_quality,
+        jpeg_progressive=progressive_checked,
+      )
+      
+      # Switch to image display if needed
+      if self.current_display_type != 'image':
+        self._setup_image_display(result.image)
+      else:
+        # Update existing image
+        self.im.set_data(result.image)
+        h, w = result.image.shape[:2]
+        self.im.set_extent([0, w, h, 0])
+      
+      display_info = result.display_info
+
+    self.fig.canvas.manager.set_window_title(current_path.name)
+    self.info_text_right.set_text(display_info)
 
   def _navigate_to_image(self, new_index):
     """Navigate to a specific image index."""
@@ -330,7 +433,7 @@ class ProcessRawUI:
     # Simple navigation: update index, load image, update display
     self.nav_state['current_index'] = new_index
     self.bayer_image = self.load_image()
-    
+
     # Update display (handles title, info, and image)
     self._update_display_fast()
     self.fig.canvas.draw()
@@ -340,7 +443,6 @@ class ProcessRawUI:
     current_path = self.image_files[self.nav_state['current_index']]
     jpeg_filename = current_path.with_suffix('.jpg').name
     return self.output_dir / jpeg_filename
-
 
   def _setup_event_handlers(self):
     """Setup all event handlers."""
@@ -359,7 +461,7 @@ class ProcessRawUI:
       self._sync_ui_from_settings(self.settings)
       self._update_display_fast()
       self.fig.canvas.draw()
-      print(f"Switched to {label} preset")
+      print(f'Switched to {label} preset')
 
     def on_rb(label):
       # Update settings first
@@ -384,7 +486,7 @@ class ProcessRawUI:
         self.settings = replace(self.settings, use_bilateral=is_checked)
       elif label == 'laplacian':
         self.settings = replace(self.settings, use_laplacian=is_checked)
-      
+
       self._update_base_pipeline()
       # Update modified preset
       self.modified_presets[self.current_preset] = self.settings
@@ -408,7 +510,7 @@ class ProcessRawUI:
       self._sync_ui_from_settings(self.settings)
       self._update_display_fast()
       self.fig.canvas.draw()
-      print(f"Reset {self.current_preset} preset to defaults")
+      print(f'Reset {self.current_preset} preset to defaults')
 
     def on_prev(event):
       self._navigate_to_image(self.nav_state['current_index'] - self.stride)
@@ -427,38 +529,51 @@ class ProcessRawUI:
     def on_quality_change(val):
       self.jpeg_quality = int(val)
       # Update display if in JPEG mode
-      show_jpeg, _ = self.cb_jpeg_options.get_status()
-      if show_jpeg:
+      display_mode_text = self.rb_display.value_selected
+      if display_mode_index == 1:  # JPEG mode
         self._update_display_fast()
         self.fig.canvas.draw_idle()
 
-    def on_jpeg_options_checkbox(label):
-      # Update progressive setting if that checkbox was clicked
-      if label == 'Progressive':
-        _, progressive_checked = self.cb_jpeg_options.get_status()
-        self.jpeg_progressive = progressive_checked
-      
-      # Update display (handles both JPEG mode and progressive changes)
+    def on_display_mode_change(label):
+      # Update display when switching between Normal/JPEG/Levels
       self._update_display_fast()
       self.fig.canvas.draw_idle()
 
+    def on_histogram_channel_change(label):
+      # Update histogram channel mode
+      channel_map = {'All': 'all', 'Red': 'red', 'Green': 'green', 'Blue': 'blue'}
+      self.histogram_channel_mode = channel_map.get(label, 'all')
+      
+      # Update display if in levels mode
+      display_mode_text = self.rb_display.value_selected
+      if display_mode_text == 'Levels':
+        self._update_display_fast()
+        self.fig.canvas.draw_idle()
+
+    def on_progressive_checkbox(label):
+      # Update progressive setting
+      progressive_checked = self.cb_progressive.get_status()[0]
+      self.jpeg_progressive = progressive_checked
+
+      # Update display if in JPEG mode
+      display_mode_text = self.rb_display.value_selected
+      if display_mode_index == 1:  # JPEG mode
+        self._update_display_fast()
+        self.fig.canvas.draw_idle()
+
     def on_save_jpeg(event):
-      # Save JPEG to disk using display layer
+      # Save JPEG to disk using display manager
       save_path = self._get_jpeg_save_path()
       current_path = self.image_files[self.nav_state['current_index']]
-      self.display_layer.save_jpeg(
-        self.bayer_image, 
-        current_path, 
-        save_path, 
-        jpeg_quality=self.jpeg_quality, 
-        jpeg_progressive=self.jpeg_progressive
+      progressive_checked = self.cb_progressive.get_status()[0]
+
+      size_mb = self.display_layer.save_jpeg(
+        self.bayer_image, current_path, save_path, jpeg_quality=self.jpeg_quality, jpeg_progressive=progressive_checked
       )
-      
-      # Get file size
-      file_size = save_path.stat().st_size
-      file_size_mb = file_size / (1024 * 1024)
-      
-      print(f'Saved JPEG to: {save_path} (quality: {self.jpeg_quality}, progressive: {self.jpeg_progressive}, size: {file_size_mb:.2f} MB)')
+
+      print(
+        f'Saved JPEG to: {save_path} (quality: {self.jpeg_quality}, progressive: {progressive_checked}, size: {size_mb:.2f} MB)'
+      )
 
     # Slider event handlers
     def on_slider_change(val, setting_path):
@@ -472,7 +587,7 @@ class ProcessRawUI:
       else:
         # Handle top-level settings
         self.settings = replace(self.settings, **{setting_path: val})
-      
+
       self._update_base_pipeline()
       self.modified_presets[self.current_preset] = self.settings
       self._update_display_fast()
@@ -484,7 +599,7 @@ class ProcessRawUI:
     self.rb_tm.on_clicked(on_rb_tm)
     self.stride_slider.on_changed(on_stride)
     self.quality_slider.on_changed(on_quality_change)
-    
+
     # Register all parameter sliders
     self.gamma.on_changed(lambda val: on_slider_change(val, 'tonemap.gamma'))
     self.light.on_changed(lambda val: on_slider_change(val, 'tonemap.light_adapt'))
@@ -497,9 +612,11 @@ class ProcessRawUI:
     self.lap_shadows.on_changed(lambda val: on_slider_change(val, 'laplacian_shadows'))
     self.lap_highlights.on_changed(lambda val: on_slider_change(val, 'laplacian_highlights'))
     self.lap_clarity.on_changed(lambda val: on_slider_change(val, 'laplacian_clarity'))
-    
+
     self.cb.on_clicked(on_cb)
-    self.cb_jpeg_options.on_clicked(on_jpeg_options_checkbox)
+    self.rb_display.on_clicked(on_display_mode_change)
+    self.rb_histogram_channels.on_clicked(on_histogram_channel_change)
+    self.cb_progressive.on_clicked(on_progressive_checkbox)
     self.btn_save.on_clicked(on_save_jpeg)
     self.btn_reset.on_clicked(on_reset)
     self.btn_prev.on_clicked(on_prev)

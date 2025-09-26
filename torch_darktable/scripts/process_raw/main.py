@@ -1,8 +1,8 @@
 import argparse
 from pathlib import Path
 
-from torch_darktable.scripts.pipeline import ImagePipeline
 from torch_darktable.scripts.util import CameraSettings, camera_settings, load_raw_image, settings_for_file
+
 from .ui import ProcessRawUI
 
 
@@ -20,16 +20,16 @@ def parse_args():
   parser.add_argument(
     '--camera', type=str, default=None, help='Camera name (one of ' + ', '.join(camera_settings.keys()) + ')'
   )
-  parser.add_argument(
-    '--output-dir', type=Path, default=None, help='Output directory for JPEG files (default: /tmp)'
-  )
+  parser.add_argument('--output-dir', type=Path, default=None, help='Output directory for JPEG files (default: /tmp)')
 
   return parser.parse_args()
 
 
-def interactive_debayer(image_files: list[Path], current_index: int, camera_settings: CameraSettings, output_dir: Path = None) -> None:
+def interactive_debayer(
+  image_files: list[Path], current_index: int, camera_settings: CameraSettings, output_dir: Path = None
+) -> None:
   """Interactive raw image processing with navigation."""
-  
+
   # Load initial image
   bayer_image = load_raw_image(image_files[current_index], camera_settings)
   device = bayer_image.device

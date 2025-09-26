@@ -156,7 +156,9 @@ compute_image_bounds = beartype(extension.compute_image_bounds)
 
 
 @beartype
-def compute_image_metrics(images: list[torch.Tensor], stride: int = 8, min_gray: float = 1e-4, rescale: bool = False) -> torch.Tensor:
+def compute_image_metrics(
+  images: list[torch.Tensor], stride: int = 8, min_gray: float = 1e-4, rescale: bool = False
+) -> torch.Tensor:
   return extension.compute_image_metrics(images, stride, min_gray, rescale)
 
 
