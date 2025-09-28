@@ -53,6 +53,10 @@ from .tonemap import (
   aces_tonemap,
   compute_image_bounds,
   compute_image_metrics,
+  print_metrics,
+  metrics_from_dict,
+  metrics_to_dict,
+
   linear_tonemap,
   reinhard_tonemap,
 )
@@ -77,6 +81,9 @@ __all__ = [
   'compute_image_bounds',
   'compute_image_metrics',
   'compute_log_luminance',
+  'metrics_from_dict',
+  'metrics_to_dict',
+  'print_metrics',
   # Color conversions
   'compute_luminance',
   'create_bilateral',

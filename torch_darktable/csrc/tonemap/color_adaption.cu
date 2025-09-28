@@ -40,6 +40,7 @@ __global__ void compute_metrics_kernel(
   const float* __restrict__ image,
   float* __restrict__ metrics,
   float* __restrict__ bounds,
+  float* __restrict__ valid_count,
   int height,
   int width,
   int stride,
@@ -59,81 +60,31 @@ __global__ void compute_metrics_kernel(
   float range = bounds[1] - bounds[0] + eps;
   float3 scaled = (rgb - bounds[0]) / range;
   
+  // Check if pixel is saturated (any component >= 0.98)
+  const float saturation_threshold = 0.98f;
+  bool is_saturated = (scaled.x >= saturation_threshold || 
+                       scaled.y >= saturation_threshold || 
+                       scaled.z >= saturation_threshold);
+  
+  // Use mask to zero out saturated pixels instead of branching
+  float mask = is_saturated ? 0.0f : 1.0f;
+  
   float gray = rgb_to_gray(scaled);
   float log_gray = logf(fmaxf(gray, min_gray));
   
-  // Reduce + atomic writes in one step
-  reduce_add(log_gray, &metrics[4]);     // log_mean
-  reduce_add(gray, &metrics[5]);         // mean  
-  reduce_add(scaled.x, &metrics[6]);     // rgb_mean.r
-  reduce_add(scaled.y, &metrics[7]);     // rgb_mean.g
-  reduce_add(scaled.z, &metrics[8]);     // rgb_mean.b
-  reduce_min(log_gray, &metrics[2]);     // log_bounds_min
-  reduce_max(log_gray, &metrics[3]);     // log_bounds_max
+  // Reduce + atomic writes with masking (log bounds removed - fixed values)
+  reduce_add(log_gray * mask, &metrics[0]);     // log_mean
+  reduce_add(gray * mask, &metrics[1]);         // linear_mean  
+  reduce_add(scaled.x * mask, &metrics[2]);     // rgb_mean.r
+  reduce_add(scaled.y * mask, &metrics[3]);     // rgb_mean.g
+  reduce_add(scaled.z * mask, &metrics[4]);     // rgb_mean.b
+  
+  // Count valid pixels
+  reduce_add(mask, valid_count);         // valid_pixel_count
 }
 
 
-__global__ void compute_transform_kernel(
-    const float* __restrict__ metrics,
-    ColorTransform* __restrict__ transform_out,
-    float intensity,
-    float light_adapt,
-    const float min_midtone = 0.3f,
-    const float midtone_range = 0.7f,
-    const float midtone_gamma = 1.4f,
-    const float eps = 1e-6f
-) {
-    // --- Extract metrics ---
-    float bounds_min_val = metrics[0];
-    float bounds_max_val = metrics[1];
-    float log_bounds_min = metrics[2];
-    float log_bounds_max = metrics[3];
-    float log_mean       = metrics[4];
-    float linear_mean    = metrics[5];
-    float3 rgb_mean      = make_float3(metrics[6], metrics[7], metrics[8]);
-    float gray_mean      = linear_mean;  // use linear mean as grayscale mean
 
-    // --- Key / map_key ---
-    float key = (log_bounds_max - log_mean) / (log_bounds_max - log_bounds_min + eps);
-    float map_key = min_midtone + midtone_range * powf(key, midtone_gamma);
-
-    // --- Compute global adapted mean ---
-    float3 gray_mean3 = make_float3(gray_mean, gray_mean, gray_mean);
-    float3 adapt_mean = lerp(light_adapt, rgb_mean, gray_mean3);
-
-
-    // --- Fill precompute struct ---
-    transform_out->adapt_mean = adapt_mean;
-    transform_out->map_key = map_key;
-
-    transform_out->exposure = expf(intensity);
-
-    transform_out->bounds_min = bounds_min_val;
-    transform_out->range = bounds_max_val - bounds_min_val + eps;
-}
-
-void metrics_to_transform(ColorTransform& transform_out, const torch::Tensor& metrics, const TonemapParams& params, cudaStream_t stream) {
-
-  TORCH_CHECK(metrics.dtype() == torch::kFloat32 && metrics.numel() == 9,
-              "metrics must be float32 with 9 elements");
-  TORCH_CHECK(metrics.device().is_cuda(), "metrics must be on CUDA device");
-
-  ColorTransform* d_tmp = nullptr;
-  CUDA_CHECK(cudaMalloc(&d_tmp, sizeof(ColorTransform)));
-
-
-  compute_transform_kernel<<<1, 1, 0, stream>>>(
-      metrics.data_ptr<float>(),
-      d_tmp,
-      params.intensity,
-      params.light_adapt);
-
-  CUDA_CHECK_KERNEL();
-
-
-  CUDA_CHECK(cudaMemcpyToSymbolAsync(transform_out, d_tmp, sizeof(ColorTransform), 0, cudaMemcpyDeviceToDevice, stream));
-  CUDA_CHECK(cudaFree(d_tmp));
-}
 
 
 torch::Tensor compute_image_bounds(const std::vector<torch::Tensor>& images, int stride) {
@@ -173,13 +124,14 @@ torch::Tensor compute_image_metrics(const std::vector<torch::Tensor>& images, in
   TORCH_CHECK(!images.empty(), "images must be non-empty");
 
   auto opts = torch::TensorOptions().dtype(torch::kFloat32).device(images[0].device());
-  auto metrics = torch::tensor({0.0f, 1.0f, FLT_MAX, -FLT_MAX, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}, opts);
+  auto metrics = torch::tensor({0.0f, 0.0f, 0.0f, 0.0f, 0.0f}, opts);
+  auto valid_count = torch::zeros(1, opts);
 
   int total_pixels = 0;
   torch::Tensor bounds = torch::tensor({0.0f, 1.0f}, opts);
   if (rescale) {
     bounds = compute_image_bounds(images, stride);
-    metrics.slice(0, 0, 2) = bounds;
+    // bounds are handled externally now
   } 
 
   for (const auto& img : images) {
@@ -198,6 +150,7 @@ torch::Tensor compute_image_metrics(const std::vector<torch::Tensor>& images, in
         img.data_ptr<float>(),
         metrics.data_ptr<float>(),
         bounds.data_ptr<float>(),
+        valid_count.data_ptr<float>(),
         height,
         width,
         stride,
@@ -205,8 +158,10 @@ torch::Tensor compute_image_metrics(const std::vector<torch::Tensor>& images, in
     CUDA_CHECK_KERNEL();
   }
 
-  float norm_factor = 1.0f / (float)total_pixels;
-  metrics.slice(0, 4, 9) *= norm_factor;
+  // Use valid pixel count for normalization instead of total pixels
+  float valid_pixels = valid_count.item<float>();
+  float norm_factor = 1.0f / fmaxf(valid_pixels, 1.0f);
+  metrics *= norm_factor;
   return metrics;
 }
 

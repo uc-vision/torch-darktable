@@ -160,22 +160,25 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     // TonemapParams struct
     py::class_<TonemapParams>(m, "TonemapParams")
         .def(py::init<>())
-        .def(py::init<float, float, float>(), 
-             py::arg("gamma"), py::arg("intensity"), py::arg("light_adapt"))
+        .def(py::init<float, float, float, float>(), 
+             py::arg("gamma"), py::arg("intensity"), py::arg("light_adapt"), py::arg("vibrance") = 0.0f)
         .def_readwrite("gamma", &TonemapParams::gamma)
         .def_readwrite("intensity", &TonemapParams::intensity)
-        .def_readwrite("light_adapt", &TonemapParams::light_adapt);
+        .def_readwrite("light_adapt", &TonemapParams::light_adapt)
+        .def_readwrite("vibrance", &TonemapParams::vibrance);
 
     // Tone mapping functions
     m.def("compute_image_bounds", &compute_image_bounds, "Compute min/max bounds of images",
           py::arg("images"), py::arg("stride") = 8);
-    m.def("compute_image_metrics", &compute_image_metrics, "Compute 9-vector image metrics for tone mapping",
+    m.def("compute_image_metrics", &compute_image_metrics, "Compute 5-element image metrics for tone mapping",
           py::arg("images"), py::arg("stride") = 8, py::arg("min_gray") = 1e-4f, py::arg("rescale") = false);
     
     // Struct-based tonemap functions (only interface)
     m.def("reinhard_tonemap", &reinhard_tonemap, "Apply Reinhard tone mapping",
           py::arg("image"), py::arg("metrics"), py::arg("params"));
     m.def("aces_tonemap", &aces_tonemap, "Apply ACES tone mapping",
+          py::arg("image"), py::arg("params"));
+    m.def("adaptive_aces_tonemap", &adaptive_aces_tonemap, "Apply adaptive ACES tone mapping",
           py::arg("image"), py::arg("metrics"), py::arg("params"));
     m.def("linear_tonemap", &linear_tonemap, "Apply linear tone mapping",
           py::arg("image"), py::arg("metrics"), py::arg("params"));

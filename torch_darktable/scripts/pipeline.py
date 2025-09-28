@@ -21,7 +21,7 @@ class Settings:
   """Image processing settings."""
 
   debayer: Literal['bilinear', 'rcd', 'ppg', 'opencv'] = 'rcd'
-  tonemap_method: Literal['reinhard', 'aces', 'linear'] = 'reinhard'
+  tonemap_method: Literal['reinhard', 'aces', 'adaptive_aces', 'linear'] = 'reinhard'
   use_postprocess: bool = False
   use_bilateral: bool = False
   use_wiener: bool = False
@@ -73,7 +73,7 @@ class ImagePipeline:
       use_wiener=True,
       use_bilateral=True,
       use_postprocess=True,
-      tonemap=TonemapParameters(gamma=2.2, intensity=2.5, light_adapt=0.8),
+      tonemap=TonemapParameters(gamma=2.2, intensity=2.0, light_adapt=0.8),
       tonemap_method='aces',
       vibrance=0.0,
     ),
@@ -205,7 +205,12 @@ class ImagePipeline:
 
     # Compute metrics for tonemapping
     metrics = td.compute_image_metrics([rgb_raw], stride=4, min_gray=1e-4)
-    params = self.settings.tonemap
+    params = TonemapParameters(
+        gamma=self.settings.tonemap.gamma,
+        intensity=self.settings.tonemap.intensity,
+        light_adapt=self.settings.tonemap.light_adapt,
+        vibrance=self.settings.vibrance
+    )
 
     # Tonemap
     if self.settings.tonemap_method == 'reinhard':
@@ -213,15 +218,15 @@ class ImagePipeline:
     elif self.settings.tonemap_method == 'linear':
       rgb_tm = td.linear_tonemap(rgb_raw, metrics, params).clamp(0.0, 1.0)
     elif self.settings.tonemap_method == 'aces':
-      rgb_tm = td.aces_tonemap(rgb_raw, metrics, params)
+      rgb_tm = td.aces_tonemap(rgb_raw, params)
+    elif self.settings.tonemap_method == 'adaptive_aces':
+      rgb_tm = td.aces_tonemap(rgb_raw, params, metrics)
     else:
       raise AssertionError(f'Invalid tonemap method: {self.settings.tonemap_method}')
 
-    # Apply vibrance adjustment
-    if self.settings.vibrance != 0.0:
-      rgb_tm = td.modify_vibrance(rgb_tm, amount=self.settings.vibrance * 4)
+    # Vibrance is now applied within the tone mapping kernels
 
     # Apply user transform at the end
     rgb_tm = transform(rgb_tm, user_transform)
 
-    return (rgb_tm * 255.0).to(torch.uint8).cpu().numpy()
+    return rgb_tm.cpu().numpy()
