@@ -29,6 +29,183 @@ def create_clean_axes(rect, zorder=None, visible_ticks=False, axis_off=False, fo
   return ax
 
 
+def _measure_ui_dimensions(ax, options, font_size=8):
+  """Measure text widths, button size, and spacing in axes coordinates."""
+  # Force axes to draw so bbox is available
+  plt.gcf().canvas.draw()
+  
+  renderer = plt.gcf().canvas.get_renderer()
+  axes_bbox = ax.get_window_extent(renderer=renderer)
+  
+  if axes_bbox.width <= 0:
+    # Fallback if axes not properly sized
+    text_widths = [len(option) * 0.08 for option in options]
+    button_width = 0.04
+    spacing = 0.015
+    return text_widths, button_width, spacing
+  
+  temp_text = ax.text(0, 0, 'test', fontsize=font_size)
+  text_widths = []
+  
+  # Measure text widths
+  for option in options:
+    temp_text.set_text(option)
+    bbox = temp_text.get_window_extent(renderer=renderer)
+    width_in_axes = bbox.width / axes_bbox.width
+    # Add safety margin for rendering differences
+    width_in_axes *= 1.15  # 15% safety margin
+    text_widths.append(width_in_axes)
+  
+  # Measure button size by creating a temporary radio button circle
+  temp_text.set_text('●')  # Use bullet character as button proxy
+  button_bbox = temp_text.get_window_extent(renderer=renderer)
+  button_width = button_bbox.width / axes_bbox.width
+  
+  # Calculate spacing based on font size - proportional to text height
+  temp_text.set_text('M')  # Use standard character for height
+  text_bbox = temp_text.get_window_extent(renderer=renderer)
+  text_height = text_bbox.height / axes_bbox.height
+  spacing = text_height * 0.3  # Spacing proportional to text height
+  
+  temp_text.remove()
+  return text_widths, button_width, spacing
+
+
+def _calculate_row_width(text_widths, button_width, spacing):
+  """Calculate total width needed for a row of options."""
+  return sum(button_width + spacing + tw for tw in text_widths)
+
+
+def _scale_font_and_widths(text_widths, total_width, target_width):
+  """Scale font size and text widths to fit target width."""
+  scale_factor = target_width / total_width
+  font_size = max(6, int(8 * scale_factor))
+  scaled_widths = [tw * scale_factor for tw in text_widths]
+  return font_size, scaled_widths
+
+
+def _try_two_row_layout(text_widths, button_width, spacing, target_width):
+  """Check if two-row layout would work better than scaling."""
+  num_options = len(text_widths)
+  if num_options < 4:
+    return False
+  
+  row1_count = (num_options + 1) // 2
+  row1_widths = text_widths[:row1_count]
+  row2_widths = text_widths[row1_count:]
+  
+  row1_width = _calculate_row_width(row1_widths, button_width, spacing)
+  row2_width = _calculate_row_width(row2_widths, button_width, spacing)
+  
+  # Be more permissive for two-row layout - allow slightly wider rows
+  # since two rows look better than tiny text
+  two_row_threshold = min(1.0, target_width * 1.2)  # Allow 20% over target, but max 100%
+  return max(row1_width, row2_width) <= two_row_threshold
+
+
+def _calculate_layout_params(text_widths, button_width, spacing, target_width=0.85):
+  """Calculate font size and spacing for radio button layout."""
+  total_content_width = _calculate_row_width(text_widths, button_width, spacing)
+  num_options = len(text_widths)
+  
+  font_size = 8
+  
+  # If content fits comfortably in single row, use it
+  if total_content_width <= target_width:
+    start_offset = (1.0 - total_content_width) / 2
+    return font_size, text_widths, start_offset, button_width, spacing, False
+  
+  # Content too wide for single row - ALWAYS try multi-row first
+  if num_options >= 4:
+    two_row_works = _try_two_row_layout(text_widths, button_width, spacing, target_width)
+    if two_row_works:
+      return font_size, text_widths, 0, button_width, spacing, True
+    
+    # Two-row doesn't work either - force two-row anyway (better than tiny text)
+    return font_size, text_widths, 0, button_width, spacing, True
+  
+  # Less than 4 options - scale font for single row as last resort
+  font_size, scaled_widths = _scale_font_and_widths(text_widths, total_content_width, target_width)
+  scaled_total_width = _calculate_row_width(scaled_widths, button_width, spacing)
+  start_offset = (1.0 - scaled_total_width) / 2
+  
+  return font_size, scaled_widths, start_offset, button_width, spacing, False
+
+
+def _position_horizontal_radio_buttons(rb, text_widths, start_offset, button_width, spacing, font_size):
+  """Position radio buttons and labels horizontally in single row."""
+  button_positions = []
+  current_x = start_offset
+  y_position = 0.5
+  
+  for i in range(len(rb.labels)):
+    button_x = current_x
+    text_x = current_x + button_width + spacing
+    
+    button_positions.append((button_x, y_position))
+    
+    # Position text with calculated font size
+    rb.labels[i].set_position((text_x, y_position))
+    rb.labels[i].set_horizontalalignment('left')
+    rb.labels[i].set_verticalalignment('center')
+    rb.labels[i].set_fontsize(font_size)
+    
+    # Move to next position
+    current_x = text_x + text_widths[i] + spacing
+  
+  # Reposition button markers
+  rb._buttons.set_offsets(button_positions)
+
+
+def _position_two_row_radio_buttons(rb, text_widths, button_width, spacing, font_size, target_width=0.95):
+  """Position radio buttons and labels in two rows."""
+  num_options = len(rb.labels)
+  row1_count = (num_options + 1) // 2  # Top row gets extra if odd number
+  
+  button_positions = []
+  
+  # Position top row
+  row1_widths = text_widths[:row1_count]
+  row1_total = sum(button_width + spacing + tw for tw in row1_widths)
+  row1_start = (1.0 - row1_total) / 2
+  
+  current_x = row1_start
+  for i in range(row1_count):
+    button_x = current_x
+    text_x = current_x + button_width + spacing
+    
+    button_positions.append((button_x, 0.7))  # Top row at 70%
+    
+    rb.labels[i].set_position((text_x, 0.7))
+    rb.labels[i].set_horizontalalignment('left')
+    rb.labels[i].set_verticalalignment('center')
+    rb.labels[i].set_fontsize(font_size)
+    
+    current_x = text_x + row1_widths[i] + spacing
+  
+  # Position bottom row
+  row2_widths = text_widths[row1_count:]
+  row2_total = sum(button_width + spacing + tw for tw in row2_widths)
+  row2_start = (1.0 - row2_total) / 2
+  
+  current_x = row2_start
+  for i in range(row1_count, num_options):
+    button_x = current_x
+    text_x = current_x + button_width + spacing
+    
+    button_positions.append((button_x, 0.3))  # Bottom row at 30%
+    
+    rb.labels[i].set_position((text_x, 0.3))
+    rb.labels[i].set_horizontalalignment('left')
+    rb.labels[i].set_verticalalignment('center')
+    rb.labels[i].set_fontsize(font_size)
+    
+    current_x = text_x + row2_widths[i - row1_count] + spacing
+  
+  # Reposition button markers
+  rb._buttons.set_offsets(button_positions)
+
+
 def create_radio_buttons(rect, options, active_option, orientation='horizontal'):
   """Create radio buttons with given options and active selection."""
   ax = plt.axes(rect)
@@ -43,29 +220,14 @@ def create_radio_buttons(rect, options, active_option, orientation='horizontal')
   rb = RadioButtons(ax, options, active=active_index)
   
   if orientation == 'horizontal':
-    num_options = len(options)
-    y_position = 0.5
+    text_widths, button_width, spacing = _measure_ui_dimensions(ax, options)
+    result = _calculate_layout_params(text_widths, button_width, spacing)
+    font_size, scaled_widths, start_offset, button_width, spacing, use_two_rows = result
     
-    # Calculate positions for button + text pairs
-    button_positions = []
-    for i in range(num_options):
-      # Each option gets 1/num_options of the width
-      section_start = i / num_options
-      section_width = 1 / num_options
-      
-      # Button at left of section, text to its right
-      button_x = section_start + section_width * 0.15  # Button at 15% into section
-      text_x = section_start + section_width * 0.35    # Text at 35% into section
-      
-      button_positions.append((button_x, y_position))
-      
-      # Position text alongside button
-      rb.labels[i].set_position((text_x, y_position))
-      rb.labels[i].set_horizontalalignment('left')
-      rb.labels[i].set_verticalalignment('center')
-    
-    # Reposition button markers horizontally alongside text
-    rb._buttons.set_offsets(button_positions)
+    if use_two_rows:
+      _position_two_row_radio_buttons(rb, scaled_widths, button_width, spacing, font_size)
+    else:
+      _position_horizontal_radio_buttons(rb, scaled_widths, start_offset, button_width, spacing, font_size)
   
   return rb
 

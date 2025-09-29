@@ -3,12 +3,11 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Button, CheckButtons, Slider
 
-from torch_darktable.scripts.pipeline import ImagePipeline
 from torch_darktable.scripts.process_raw.display_layer import CurrentDisplayState, DisplayLayer, DisplayMode
 from torch_darktable.scripts.util import load_raw_image
 
 from .pipeline_ui import PipelineController
-from .ui_builder import UILayoutManager, create_clean_axes, create_radio_buttons, create_checkboxes
+from .ui_builder import UILayoutManager, create_clean_axes, create_radio_buttons
 
 
 def create_axes_vertical(n, x=0.08, w=0.13, h=0.015, y_top=0.51, y_bottom=0.25):
@@ -67,11 +66,18 @@ class ProcessRawUI:
     def update_display_layer():
       self.display_layer._base_pipeline = self.pipeline_controller.base_pipeline
       self._update_and_draw()
+      # Update histogram window if open
+      if self.histogram_window is not None and self.histogram_window.is_open():
+        self.histogram_window.update_display(self.bayer_image, self.camera_settings, self.pipeline_controller.base_pipeline)
+      # Update JPEG preview window if open
+      if self.jpeg_window is not None and self.jpeg_window.is_open():
+        self.jpeg_window.base_pipeline = self.pipeline_controller.base_pipeline
+        self.jpeg_window.bayer_image = self.bayer_image
+        self.jpeg_window.camera_settings = self.camera_settings
+        self.jpeg_window.update_display()
     self.pipeline_controller.update_display_callback = update_display_layer
 
-    # JPEG settings
-    self.jpeg_quality = 95
-    self.jpeg_progressive = False
+    # Note: JPEG settings moved to popup window
 
 
     # Output directory for JPEG files
@@ -132,21 +138,12 @@ class ProcessRawUI:
     self.pipeline_controller.create_pipeline_ui(layout)
     
 
-    # Display mode radio buttons (horizontal)
-    display_modes = ['Normal', 'JPEG', 'Levels']
-    display_rect = layout.add_component(0.06)
-    self.rb_display = create_radio_buttons(display_rect, display_modes, 'Normal', orientation='horizontal')
+    # Display mode controls removed - only normal mode, JPEG moved to popup
 
     # Add gap before bottom section
     # Add some spacing
     
-    # JPEG controls (quality slider + progressive checkbox) 
-    quality_rect, progressive_rect = layout.add_horizontal_pair(left_width_ratio=0.7, height=0.025)
-    ax_quality = create_clean_axes(quality_rect, for_slider=True)
-    self.quality_slider = Slider(ax_quality, 'quality', 1, 100, valinit=self.jpeg_quality, valfmt='%d')
-    
-    ax_progressive = plt.axes(progressive_rect)
-    self.cb_progressive = CheckButtons(ax_progressive, ['Progressive'], [False])
+    # Note: JPEG controls moved to popup window - removed from main UI
     
     # Image info display 
     info_rect = layout.add_component(0.025)
@@ -167,18 +164,23 @@ class ProcessRawUI:
       transform=ax_info.transAxes,
     )
 
-    # Histogram channel controls (horizontal checkboxes)
-    hist_rect = layout.add_component(0.04)
-    self.hist_checkboxes = create_checkboxes(hist_rect, ['Red', 'Green', 'Blue'], [True, True, True])
-    self.hist_channel_states = {'Red': True, 'Green': True, 'Blue': True}
+    # Note: Histogram controls moved to popup window - removed from main UI
 
-    # Save and reset buttons at bottom - 2 buttons in a row
-    button_rects = layout.add_button_row(2, height=0.06)
+    # Save, reset, levels and JPEG preview buttons at bottom - 4 buttons in a row  
+    button_rects = layout.add_button_row(4, height=0.06)
     ax_save = create_clean_axes(button_rects[0])
     ax_reset = create_clean_axes(button_rects[1])
+    ax_levels = create_clean_axes(button_rects[2])
+    ax_jpeg = create_clean_axes(button_rects[3])
 
     self.btn_save = Button(ax_save, 'Save JPEG')
     self.btn_reset = Button(ax_reset, 'Reset')
+    self.btn_levels = Button(ax_levels, 'Show Levels')
+    self.btn_jpeg = Button(ax_jpeg, 'JPEG Preview')
+
+    # Popup window references
+    self.histogram_window = None
+    self.jpeg_window = None
 
 
 
@@ -211,14 +213,9 @@ class ProcessRawUI:
     """Update the display according to the current mode."""
     current_path = self.image_files[self.nav_state['current_index']]
 
-    # Get display mode from radio buttons
-    display_mode_text = self.rb_display.value_selected
-    display_mode_map = {'Normal': DisplayMode.NORMAL, 'JPEG': DisplayMode.JPEG, 'Levels': DisplayMode.LEVELS}
-    display_mode = display_mode_map.get(display_mode_text, DisplayMode.NORMAL)
+    # Only normal display mode
+    display_mode = DisplayMode.NORMAL
 
-    # Get current display state for display_layer
-    progressive_checked = self.cb_progressive.get_status()[0]
-    
     # Let display_layer handle all the logic
     # Let display layer handle complete setup
     new_display_state = self.display_layer.setup_display(
@@ -227,8 +224,8 @@ class ProcessRawUI:
       self.camera_settings,
       display_mode,
       current_state=self.display_state,
-      jpeg_quality=self.jpeg_quality,
-      jpeg_progressive=progressive_checked,
+      jpeg_quality=95,  # Default values, not used since JPEG mode removed
+      jpeg_progressive=False,
     )
     
     # Update UI state from display layer result
@@ -252,8 +249,18 @@ class ProcessRawUI:
     self.nav_state['current_index'] = new_index
     self.bayer_image = self.load_image()
 
-    # Update display (handles title, info, and image)
+    # Update main display (handles title, info, and image)
     self._update_and_draw()
+    
+    # Update histogram window if open
+    if self.histogram_window is not None and self.histogram_window.is_open():
+      self.histogram_window.update_display(self.bayer_image, self.camera_settings, self.pipeline_controller.base_pipeline)
+    
+    # Update JPEG preview window if open
+    if self.jpeg_window is not None and self.jpeg_window.is_open():
+      self.jpeg_window.bayer_image = self.bayer_image
+      self.jpeg_window.camera_settings = self.camera_settings
+      self.jpeg_window.update_display()
 
   def _get_jpeg_save_path(self):
     """Get the save path for current image's JPEG."""
@@ -276,17 +283,12 @@ class ProcessRawUI:
     def on_rotate(event):
       self.display_layer.rotate_transform()
       self._update_and_draw()
+      # Update JPEG preview window if open
+      if self.jpeg_window is not None and self.jpeg_window.is_open():
+        self.jpeg_window.update_display()
 
     def on_stride(val):
       self.stride = int(val)
-
-    def on_quality_change(val):
-      self.jpeg_quality = int(val)
-
-    def on_progressive_checkbox(label):
-      # Update progressive setting
-      progressive_checked = self.cb_progressive.get_status()[0]
-      self.jpeg_progressive = progressive_checked
 
     def on_save_jpeg(event):
       # Save JPEG to disk using display manager
@@ -295,51 +297,56 @@ class ProcessRawUI:
       
       save_path = self._get_jpeg_save_path()
       current_path = self.image_files[self.nav_state['current_index']]
-      progressive_checked = self.cb_progressive.get_status()[0]
 
       size_mb = self.display_layer.save_jpeg(
         self.bayer_image, current_path, save_path, 
         user_transform=self.display_layer._user_transform,
-        jpeg_quality=self.jpeg_quality, jpeg_progressive=progressive_checked
+        jpeg_quality=95, jpeg_progressive=False  # Use defaults
       )
 
       print(
-        f'Saved JPEG to: {save_path} (quality: {self.jpeg_quality}, progressive: {progressive_checked}, size: {size_mb:.2f} MB)'
+        f'Saved JPEG to: {save_path} (quality: 95, progressive: False, size: {size_mb:.2f} MB)'
       )
 
     def on_reset(event):
-      # Reset current preset to defaults
       self.pipeline_controller.reset_current_preset()
-      self.pipeline_controller._sync_ui_from_settings()
-      self.pipeline_controller._update_base_pipeline()
-      self.pipeline_controller.update_display_callback()
 
+    def on_show_levels(event):
+      # Show or focus histogram popup window
+      if self.histogram_window is None or not self.histogram_window.is_open():
+        from .histogram_window import HistogramWindow
+        self.histogram_window = HistogramWindow(self.bayer_image, self.camera_settings, self.pipeline_controller.base_pipeline)
+        self.histogram_window.show()
+      else:
+        # Bring existing window to front and update
+        self.histogram_window.fig.canvas.manager.show()
+        self.histogram_window.update_display(self.bayer_image, self.camera_settings, self.pipeline_controller.base_pipeline)
+
+
+    def on_show_jpeg_preview(event):
+      # Show or focus JPEG preview popup window
+      if self.jpeg_window is None or not self.jpeg_window.is_open():
+        from .jpeg_preview_window import JpegPreviewWindow
+        self.jpeg_window = JpegPreviewWindow(
+          self.bayer_image, self.camera_settings, self.pipeline_controller.base_pipeline, self.display_layer
+        )
+        self.jpeg_window.show()
+      else:
+        # Bring existing window to front and update
+        self.jpeg_window.fig.canvas.manager.show()
+        self.jpeg_window.base_pipeline = self.pipeline_controller.base_pipeline
+        self.jpeg_window.bayer_image = self.bayer_image
+        self.jpeg_window.camera_settings = self.camera_settings
+        self.jpeg_window.update_display()
 
     # Register all event handlers
     self.stride_slider.on_changed(on_stride)
-    self.quality_slider.on_changed(self._with_update(on_quality_change))
 
-
-    # Connect horizontal checkbox events
-    def on_display_mode(label):
-      self._update_and_draw()
-      
-    def on_histogram_channel(label):
-      self.hist_channel_states[label] = not self.hist_channel_states[label]
-      # Update the histogram display
-      if hasattr(self, 'display_state') and self.display_state.display_type == 'histogram':
-        from torch_darktable.scripts.process_raw.histogram_display import update_histogram_with_channels
-        update_histogram_with_channels(self.display_state.main_display_area, self.bayer_image, self.camera_settings, self.hist_channel_states)
-        self.fig.canvas.draw_idle()
-    
-    self.rb_display.on_clicked(on_display_mode)
-    
-    # Connect each histogram checkbox
-    for cb in self.hist_checkboxes:
-      cb.on_clicked(on_histogram_channel)
-    self.cb_progressive.on_clicked(self._with_update(on_progressive_checkbox))
+    # Display mode handlers removed - only normal mode
     self.btn_save.on_clicked(on_save_jpeg)
     self.btn_reset.on_clicked(on_reset)
+    self.btn_levels.on_clicked(on_show_levels)
+    self.btn_jpeg.on_clicked(on_show_jpeg_preview)
     self.btn_prev.on_clicked(on_prev)
     self.btn_next.on_clicked(on_next)
     self.btn_rotate.on_clicked(on_rotate)

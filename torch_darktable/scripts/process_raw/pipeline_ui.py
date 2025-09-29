@@ -87,7 +87,7 @@ class PipelineController:
       self._update_base_pipeline()
 
   def update_setting(self, setting_path: str, value):
-    """Update a specific setting using dot notation."""
+    """Update any setting using dot notation or direct field names."""
     if '.' in setting_path:
       # Handle nested settings like 'tonemap.gamma'
       parts = setting_path.split('.')
@@ -95,43 +95,30 @@ class PipelineController:
         tonemap = replace(self.settings.tonemap, **{parts[1]: value})
         self.settings = replace(self.settings, tonemap=tonemap)
     else:
-      # Handle top-level settings
-      self.settings = replace(self.settings, **{setting_path: value})
+      # Handle special checkbox mappings
+      checkbox_mapping = {
+        'postprocess': 'use_postprocess',
+        'wiener': 'use_wiener', 
+        'bilateral': 'use_bilateral',
+        'laplacian': 'use_laplacian'
+      }
+      actual_field = checkbox_mapping.get(setting_path, setting_path)
+      self.settings = replace(self.settings, **{actual_field: value})
 
+    self._update_pipeline_and_ui()
+
+  def _update_pipeline_and_ui(self):
+    """Common update logic - update pipeline, save preset, and refresh UI."""
     self._update_base_pipeline()
     self.modified_presets[self.current_preset] = self.settings
-
-  def update_debayer_method(self, method: str):
-    """Update debayer method."""
-    self.settings = replace(self.settings, debayer=method)  # type: ignore[arg-type]
-    self._update_base_pipeline()
-    self.modified_presets[self.current_preset] = self.settings
-
-  def update_tonemap_method(self, method: str):
-    """Update tonemap method."""
-    self.settings = replace(self.settings, tonemap_method=method)  # type: ignore[arg-type]
-    self._update_base_pipeline()
-    self.modified_presets[self.current_preset] = self.settings
-
-  def update_checkbox_setting(self, setting_name: str, value: bool):
-    """Update a checkbox setting."""
-    if setting_name == 'postprocess':
-      self.settings = replace(self.settings, use_postprocess=value)
-    elif setting_name == 'wiener':
-      self.settings = replace(self.settings, use_wiener=value)
-    elif setting_name == 'bilateral':
-      self.settings = replace(self.settings, use_bilateral=value)
-    elif setting_name == 'laplacian':
-      self.settings = replace(self.settings, use_laplacian=value)
-
-    self._update_base_pipeline()
-    self.modified_presets[self.current_preset] = self.settings
+    self.update_display_callback()
 
   def reset_current_preset(self):
     """Reset current preset to hardcoded defaults."""
     self.settings = ImagePipeline.presets[self.current_preset]
     self.modified_presets[self.current_preset] = self.settings
-    self._update_base_pipeline()
+    self._update_pipeline_and_ui()
+    self._sync_ui_from_settings()
 
   def get_current_image_path(self) -> Path:
     """Get the current image path."""
@@ -148,12 +135,7 @@ class PipelineController:
       # Create new settings with updated value
       new_settings = setter(self.settings, val)
       self.settings = new_settings
-      
-      self._update_base_pipeline()
-      # Update modified preset
-      self.modified_presets[self.current_preset] = self.settings
-      # Update the main UI display
-      self.update_display_callback()
+      self._update_pipeline_and_ui()
     
     return handler
 
@@ -161,16 +143,16 @@ class PipelineController:
     """Create all pipeline-related UI components using the layout manager."""
     
     # Preset radio buttons
-    preset_rect = layout_manager.add_component(0.06)
+    preset_rect = layout_manager.add_component(0.08)
     available_presets = list(ImagePipeline.presets.keys())
     self.rb_presets = create_radio_buttons(preset_rect, available_presets, self.current_preset, orientation='horizontal')
     
     # Debayer method radio buttons  
-    debayer_rect = layout_manager.add_component(0.06)
+    debayer_rect = layout_manager.add_component(0.08)
     self.rb_debayer = create_radio_buttons(debayer_rect, ('bilinear', 'rcd', 'ppg', 'opencv'), self.settings.debayer, orientation='horizontal')
     
     # Tonemap method radio buttons
-    tonemap_rect = layout_manager.add_component(0.06) 
+    tonemap_rect = layout_manager.add_component(0.08) 
     self.rb_tonemap = create_radio_buttons(tonemap_rect, ('reinhard', 'aces', 'adaptive_aces', 'linear'), self.settings.tonemap_method, orientation='horizontal')
     
     # Checkboxes
@@ -210,28 +192,22 @@ class PipelineController:
     
   def _connect_pipeline_events(self):
     """Connect all pipeline UI event handlers."""
-    # Preset handler
+    # Consolidated event handlers
     def on_presets(label):
       self.switch_preset(label)
       self._sync_ui_from_settings()
       self.update_display_callback()
       
-    # Debayer handler
     def on_debayer(label):
-      self.update_debayer_method(label)
-      self.update_display_callback()
+      self.update_setting('debayer', label)
       
-    # Tonemap handler  
     def on_tonemap(label):
-      self.update_tonemap_method(label)
-      self.update_display_callback()
+      self.update_setting('tonemap_method', label)
       
-    # Checkbox handler
     def on_checkbox(label):
       idx = self.checkbox_labels.index(label)
       is_checked = self.checkboxes[idx].get_status()[0]
-      self.update_checkbox_setting(label, is_checked)
-      self.update_display_callback()
+      self.update_setting(label, is_checked)
       
     # Register handlers
     self.rb_presets.on_clicked(on_presets)

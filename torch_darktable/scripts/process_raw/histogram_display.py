@@ -29,8 +29,10 @@ def create_histograms(ax, bayer_image, camera_settings, channel_mode='all', bins
   
   if channel_mode == 'all':
     # Create overlaid histograms with transparency
+    # Note: Green channel is normalized by 0.5 because there are 2x green pixels in Bayer pattern
     ax.hist(r_channel, bins=bins, color='red', alpha=0.6, range=(0, 1), label='Red')
-    ax.hist(g_channel, bins=bins, color='green', alpha=0.6, range=(0, 1), label='Green')
+    green_weights = np.full(len(g_channel), 0.5)
+    ax.hist(g_channel, bins=bins, color='green', alpha=0.6, range=(0, 1), label='Green', weights=green_weights)
     ax.hist(b_channel, bins=bins, color='blue', alpha=0.6, range=(0, 1), label='Blue')
     ax.set_title('RGB Channels', color='black')
     ax.legend()
@@ -38,6 +40,7 @@ def create_histograms(ax, bayer_image, camera_settings, channel_mode='all', bins
     ax.hist(r_channel, bins=bins, color='red', alpha=0.8, range=(0, 1))
     ax.set_title('Red Channel', color='black')
   elif channel_mode == 'green':
+    # Don't normalize when showing only green channel
     ax.hist(g_channel, bins=bins, color='green', alpha=0.8, range=(0, 1))
     ax.set_title('Green Channel', color='black')
   elif channel_mode == 'blue':
@@ -46,7 +49,8 @@ def create_histograms(ax, bayer_image, camera_settings, channel_mode='all', bins
   
   # Add axis labels
   ax.set_xlabel('Pixel Value', color='black')
-  ax.set_ylabel('Count', color='black')
+  ylabel = 'Count (Normalized)' if channel_mode == 'all' else 'Count'
+  ax.set_ylabel(ylabel, color='black')
   
   # Style the axis - white background
   ax.set_facecolor('white')
@@ -71,18 +75,38 @@ def create_selective_histograms(ax, bayer_image, camera_settings, channel_states
   bayer_np = bayer_image.cpu().numpy()
   r_channel, g_channel, b_channel = extract_bayer_channels(bayer_np, camera_settings.bayer_pattern)
   
-  # Create histograms only for enabled channels
+  # Calculate saturation percentages (values >= 0.99)
+  saturation_threshold = 0.99
+  r_saturated = np.sum(r_channel >= saturation_threshold) / len(r_channel) * 100
+  g_saturated = np.sum(g_channel >= saturation_threshold) / len(g_channel) * 100  
+  b_saturated = np.sum(b_channel >= saturation_threshold) / len(b_channel) * 100
+  
+  # Filter out saturated pixels for histogram display (exclude 1.0 level)
+  r_filtered = r_channel[r_channel < saturation_threshold]
+  g_filtered = g_channel[g_channel < saturation_threshold]
+  b_filtered = b_channel[b_channel < saturation_threshold]
+  
+  # Create histograms only for enabled channels, excluding saturated pixels
+  histogram_range = (0, 0.99)  # Exclude 1.0 level
+  
   if channel_states.get('Red', True):
-    ax.hist(r_channel, bins=bins, color='red', alpha=0.6, range=(0, 1), label='Red')
+    label = f'Red ({r_saturated:.1f}% sat)' if r_saturated > 0.1 else 'Red'
+    ax.hist(r_filtered, bins=bins, color='red', alpha=0.6, range=histogram_range, label=label)
+  
   if channel_states.get('Green', True):
-    ax.hist(g_channel, bins=bins, color='green', alpha=0.6, range=(0, 1), label='Green')  
+    label = f'Green ({g_saturated:.1f}% sat)' if g_saturated > 0.1 else 'Green'
+    # Divide green count by 2 since there are 2x green pixels in Bayer pattern
+    green_weights = np.full(len(g_filtered), 0.5)
+    ax.hist(g_filtered, bins=bins, color='green', alpha=0.6, range=histogram_range, label=label, weights=green_weights)
+  
   if channel_states.get('Blue', True):
-    ax.hist(b_channel, bins=bins, color='blue', alpha=0.6, range=(0, 1), label='Blue')
+    label = f'Blue ({b_saturated:.1f}% sat)' if b_saturated > 0.1 else 'Blue'
+    ax.hist(b_filtered, bins=bins, color='blue', alpha=0.6, range=histogram_range, label=label)
   
   if any(channel_states.values()):  # Only show legend if at least one channel is enabled
     ax.legend()
-  ax.set_xlabel('Pixel Value')
-  ax.set_ylabel('Count')
+  ax.set_xlabel('Pixel Value (excluding saturated)')
+  ax.set_ylabel('Count (Normalized)')
   ax.grid(True, alpha=0.3)
 
 
@@ -161,7 +185,7 @@ def update_histogram_with_channels(ax, bayer_image, camera_settings, channel_sta
   # Clear and redraw with selected channels
   ax.clear()
   
-  # Create histograms with selective channels
+  # Create histograms with selective channels (includes green normalization)
   create_selective_histograms(ax, bayer_image, camera_settings, channel_states)
   
   # Restore axis limits
