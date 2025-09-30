@@ -60,7 +60,11 @@ def transformed_size(original_size: tuple[int, int], transform: ImageTransform) 
   return original_size
 
 
-def transform(image: torch.Tensor, transform: ImageTransform):
+def transform(  # noqa: PLR0911
+image: torch.Tensor,
+transform: ImageTransform
+) -> torch.Tensor:
+
   match transform:
     case ImageTransform.none:
       return image
