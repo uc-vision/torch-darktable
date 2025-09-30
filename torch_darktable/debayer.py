@@ -1,23 +1,10 @@
 """Bayer demosaicing algorithms and utilities."""
 
-from enum import Enum
-
 from beartype import beartype
 import torch
 
+from .bayer import BayerPattern, PackedFormat
 from .extension import extension
-
-
-class BayerPattern(Enum):
-  RGGB = extension.BayerPattern.RGGB
-  BGGR = extension.BayerPattern.BGGR
-  GRBG = extension.BayerPattern.GRBG
-  GBRG = extension.BayerPattern.GBRG
-
-
-class PackedFormat(Enum):
-  Packed12 = 0
-  Packed12_IDS = 1
 
 
 class Bilinear5x5:

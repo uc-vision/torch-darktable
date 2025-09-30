@@ -33,7 +33,7 @@ def _load_cuda_extension(debug: bool = False, verbose: bool = False):
     name=extension_name,
     sources=sources,
     extra_include_paths=[str(source_dir)],
-    extra_cflags=['-O3', '-std=c++17'] if not debug else ['-O0', '-g3', '-ggdb3'],
+    extra_cflags=['-O3', '-std=c++17', '-Wno-stringop-overread'] if not debug else ['-O0', '-g3', '-ggdb3', '-Wno-stringop-overread'],
     verbose=verbose,
     with_cuda=True,
     extra_cuda_cflags=['-G', '-O0', '-lineinfo']
