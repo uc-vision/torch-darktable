@@ -60,8 +60,8 @@ __global__ void compute_metrics_kernel(
   float range = bounds[1] - bounds[0] + eps;
   float3 scaled = (rgb - bounds[0]) / range;
   
-  // Check if pixel is saturated (any component >= 0.98)
-  const float saturation_threshold = 0.98f;
+  // Check if pixel is saturated (any component >= 0.99)
+  const float saturation_threshold = 0.99f;
   bool is_saturated = (scaled.x >= saturation_threshold || 
                        scaled.y >= saturation_threshold || 
                        scaled.z >= saturation_threshold);

@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from enum import Enum
 from pathlib import Path
 
 from beartype import beartype
@@ -8,92 +7,53 @@ import numpy as np
 import torch
 
 import torch_darktable as td
-
-
-class ImageTransform(Enum):
-  none = 'none'
-  rotate_90 = 'rotate_90'
-  rotate_180 = 'rotate_180'
-  rotate_270 = 'rotate_270'
-  transpose = 'transpose'
-  flip_horiz = 'flip_horiz'
-  flip_vert = 'flip_vert'
-  transverse = 'transverse'
-
-  def next_rotation(self) -> 'ImageTransform':
-    """Return the next rotation in 90-degree increments."""
-    rotation_map = {
-      ImageTransform.none: ImageTransform.rotate_90,
-      ImageTransform.rotate_90: ImageTransform.rotate_180,
-      ImageTransform.rotate_180: ImageTransform.rotate_270,
-      ImageTransform.rotate_270: ImageTransform.none,
-      ImageTransform.transpose: ImageTransform.flip_horiz,
-      ImageTransform.flip_horiz: ImageTransform.flip_vert,
-      ImageTransform.flip_vert: ImageTransform.transverse,
-      ImageTransform.transverse: ImageTransform.transpose,
-    }
-    return rotation_map.get(self, ImageTransform.rotate_90)
+from torch_darktable.pipeline.transform import ImageTransform
 
 
 @beartype
-@dataclass
+@dataclass(frozen=True, kw_only=True)
 class CameraSettings:
   name: str
   image_size: tuple[int, int]
-  ids_format: bool = False
   bayer_pattern: td.BayerPattern = td.BayerPattern.RGGB
-  white_balance: tuple[float, float, float] = (1.0, 1.0, 1.0)
-  brightness: float = 1.0
+  packed_format: td.PackedFormat = td.PackedFormat.Packed12
   padding: int = 0
-  transform: ImageTransform = ImageTransform.none
-  preset: str = 'reinhard'
+  white_balance: tuple[float, float, float] = (1.0, 1.0, 1.0)
+  preset: str
+
+  transform: ImageTransform | dict[str, ImageTransform] = ImageTransform.none
+
+  def get_image_transform(self, camera_name: str) -> ImageTransform:
+    if isinstance(self.transform, dict):
+      return self.transform.get(camera_name, ImageTransform.none)
+    return self.transform
+
+
 
   @property
   def bytes(self) -> int:
-    return (self.image_size[0] * self.image_size[1] * 3 // 2) + self.padding
+    return ((self.image_size[0] * self.image_size[1] * 3) // 2) + self.padding
 
 
 @beartype
-def transformed_size(original_size: tuple[int, int], transform: ImageTransform) -> tuple[int, int]:
-  if transform in {ImageTransform.rotate_90, ImageTransform.rotate_270, ImageTransform.transpose}:
-    return (original_size[1], original_size[0])  # swap width/height
-  return original_size
-
-
-def transform(  # noqa: PLR0911
-image: torch.Tensor,
-transform: ImageTransform
-) -> torch.Tensor:
-
-  match transform:
-    case ImageTransform.none:
-      return image
-    case ImageTransform.rotate_90:
-      return torch.rot90(image, 1, (0, 1)).contiguous()
-    case ImageTransform.rotate_180:
-      return torch.rot90(image, 2, (0, 1)).contiguous()
-    case ImageTransform.rotate_270:
-      return torch.rot90(image, 3, (0, 1)).contiguous()
-    case ImageTransform.flip_horiz:
-      return torch.flip(image, (1,)).contiguous()
-    case ImageTransform.flip_vert:
-      return torch.flip(image, (0,)).contiguous()
-    case ImageTransform.transverse:
-      return torch.flip(image, (0, 1)).contiguous()
-    case ImageTransform.transpose:
-      return torch.transpose(image, 0, 1).contiguous()
-
-
-@beartype
-def load_raw_bytes(filepath: Path, device: torch.device = torch.device('cuda')):
+def load_raw_bytes(filepath: Path, device: torch.device = torch.device('cuda:0')):
   """Load raw image bytes into torch tensor without any decoding"""
   with filepath.open('rb') as f:
     raw_bytes = f.read()
   return torch.frombuffer(raw_bytes, dtype=torch.uint8).to(device, non_blocking=True)
 
 
-def load_raw_image(
-  filepath: Path, camera_settings: CameraSettings | None = None, device: torch.device = torch.device('cuda')
+@beartype
+def load_raw_bytes_stripped(filepath: Path, camera_settings: CameraSettings, device: torch.device = torch.device('cuda:0')):
+  """Load raw image bytes and strip padding, but don't decode"""
+  raw_bytes = load_raw_bytes(filepath, device)
+  if camera_settings.padding > 0:
+    raw_bytes = raw_bytes[: -camera_settings.padding]
+  return raw_bytes
+
+
+def load_raw_bayer(
+  filepath: Path, camera_settings: CameraSettings | None = None, device: torch.device = torch.device('cuda:0')
 ) -> torch.Tensor:
   if camera_settings is None:
     camera_settings = settings_for_file(filepath)
@@ -104,37 +64,47 @@ def load_raw_image(
   if camera_settings.padding > 0:
     raw_cuda = raw_cuda[: -camera_settings.padding]
 
-  fmt = td.PackedFormat.Packed12_IDS if camera_settings.ids_format else td.PackedFormat.Packed12
-  decoded = td.decode12(raw_cuda, output_dtype=torch.float32, format_type=fmt)
+  decoded = td.decode12(raw_cuda, output_dtype=torch.float32, format_type=camera_settings.packed_format)
 
-  bayer = decoded.view(-1, width)
-  return scale_bayer(bayer, camera_settings.white_balance) * camera_settings.brightness
+  return decoded.view(-1, width)
 
+
+beetroot_transforms = {f"cam{i}": ImageTransform.rotate_270 if i > 6 else ImageTransform.rotate_90 for i in range(1, 13)}
 
 camera_settings = dict(
-  blackfly=CameraSettings(
-    name='blackfly',
+  artichoke=CameraSettings(
+    name='artichoke',
     image_size=(4096, 3000),
-    ids_format=False,
-    white_balance=(1.0, 1.0, 1.0),
-    brightness=0.8,
+    packed_format=td.PackedFormat.Packed12,
+    preset='adaptive_aces',
     transform=ImageTransform.rotate_270,
   ),
-  ids=CameraSettings(
-    name='ids',
+
+  # carrot=CameraSettings(
+  #   name='carrot',
+  #   image_size=(2472, 2062),
+  #   packed_format=td.PackedFormat.Packed12_IDS,
+  #   preset='adaptive_aces',
+  #   transform=ImageTransform.rotate_270,
+  #   white_balance=(1.8, 1.0, 2.1),
+  # ),
+
+  beetroot=CameraSettings(
+    name='beetroot',
     image_size=(2472, 2062),
-    ids_format=True,
-    white_balance=(1.7, 1.0, 2.1),
-    brightness=1.0,
-    transform=ImageTransform.rotate_90,
+    packed_format=td.PackedFormat.Packed12_IDS,
+    preset='adaptive_aces',
+    transform=beetroot_transforms,
+    white_balance=(1.8, 1.0, 2.1),
   ),
+
   pfr=CameraSettings(
     name='pfr',
     image_size=(4112, 3008),
-    white_balance=(1.0, 1.0, 1.0),
-    brightness=1.0,
     padding=1536,
-    transform=ImageTransform.rotate_90,
+    preset='adaptive_aces',
+    packed_format=td.PackedFormat.Packed12,
+    transform=ImageTransform.rotate_270,
   ),
 )
 
@@ -161,36 +131,3 @@ def display_rgb(k: str, rgb_image: torch.Tensor | np.ndarray):
     pass
 
   cv2.destroyAllWindows()
-
-
-def stack_bayer(bayer_image):
-  return torch.stack(
-    (
-      bayer_image[0::2, 0::2],  # Red
-      bayer_image[0::2, 1::2],  # Green
-      bayer_image[1::2, 0::2],  # Green
-      bayer_image[1::2, 1::2],  # Blue
-    ),
-    dim=-1,
-  )
-
-
-def expand_bayer(x):
-  h, w = x.shape[0], x.shape[1]
-  result = torch.zeros(h * 2, w * 2, device=x.device, dtype=x.dtype)
-
-  r, g1, g2, b = x.unbind(dim=-1)
-
-  result[0::2, 0::2] = r  # Red
-  result[0::2, 1::2] = g1  # Green
-  result[1::2, 0::2] = g2  # Green
-  result[1::2, 1::2] = b  # Blue
-  return result
-
-
-def scale_bayer(x, white_balance=(0.5, 1.0, 0.5)):
-  r, g, b = white_balance
-  scaling = torch.tensor([r, g, g, b], device=x.device, dtype=x.dtype)
-
-  x = stack_bayer(x) * scaling
-  return expand_bayer(x)

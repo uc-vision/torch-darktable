@@ -33,7 +33,9 @@ def _load_cuda_extension(debug: bool = False, verbose: bool = False):
     name=extension_name,
     sources=sources,
     extra_include_paths=[str(source_dir)],
-    extra_cflags=['-O3', '-std=c++17', '-Wno-stringop-overread'] if not debug else ['-O0', '-g3', '-ggdb3', '-Wno-stringop-overread'],
+    extra_cflags=['-O3', '-std=c++17', '-Wno-stringop-overread']
+    if not debug
+    else ['-O0', '-g3', '-ggdb3', '-Wno-stringop-overread'],
     verbose=verbose,
     with_cuda=True,
     extra_cuda_cflags=['-G', '-O0', '-lineinfo']
@@ -54,26 +56,24 @@ else:
 # readable representations for algorithm classes
 def _install_algorithm_repr() -> None:
   def _ppg_repr(self) -> str:
-    return f'PPG(median_threshold={self.median_threshold})'
+    return f'PPG({self.width}x{self.height}, median_threshold={self.median_threshold})'
 
   def _rcd_repr(self) -> str:
-    return 'RCD()'
+    return f'RCD({self.width}x{self.height})'
 
   def _postprocess_repr(self) -> str:
     return (
-      f'PostProcess(color_smoothing_passes={self.color_smoothing_passes}, '
+      f'PostProcess({self.width}x{self.height}, color_smoothing_passes={self.color_smoothing_passes}, '
       f'green_eq_local={self.green_eq_local}, '
       f'green_eq_global={self.green_eq_global}, '
       f'green_eq_threshold={self.green_eq_threshold})'
     )
 
   def _laplacian_repr(self) -> str:
-    return (
-      f'Laplacian(sigma={self.sigma}, shadows={self.shadows}, highlights={self.highlights}, clarity={self.clarity})'
-    )
+    return f'Laplacian({self.width}x{self.height}, sigma={self.sigma}, shadows={self.shadows}, highlights={self.highlights}, clarity={self.clarity})'
 
   def _bilateral_repr(self) -> str:
-    return f'Bilateral(sigma_s={self.sigma_s}, sigma_r={self.sigma_r})'
+    return f'Bilateral({self.width}x{self.height}, sigma_s={self.sigma_s}, sigma_r={self.sigma_r})'
 
   extension.PPG.__repr__ = _ppg_repr
   extension.RCD.__repr__ = _rcd_repr

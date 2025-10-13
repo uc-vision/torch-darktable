@@ -248,12 +248,15 @@ struct WienerImpl final : public Wiener {
 
     torch::Device device_;
     int overlap_factor_;
+    int width_;
+    int height_;
 
 public:
     WienerImpl(torch::Device device,
+      int width, int height,
       int overlap_factor = 4,  
       const float interp_scale = 0.3f, const float fft_scale = 0.3f)
-        : device_(device), overlap_factor_(overlap_factor) {
+        : device_(device), overlap_factor_(overlap_factor), width_(width), height_(height) {
         
         auto stream = at::cuda::getCurrentCUDAStream(device.index());
         Window<K>::init(fft_scale, interp_scale, stream);
@@ -342,6 +345,8 @@ public:
     }
     
     int get_overlap_factor() const override { return overlap_factor_; }
+    int get_width() const override { return width_; }
+    int get_height() const override { return height_; }
     
 
 };
@@ -352,9 +357,9 @@ std::shared_ptr<Wiener> create_wiener(torch::Device device,
     int width, int height, int overlap_factor, int tile_size) {
 
     if (tile_size == 16) {
-        return std::make_shared<WienerImpl<16>>(device,  overlap_factor);
+        return std::make_shared<WienerImpl<16>>(device, width, height, overlap_factor);
     } else {
-        return std::make_shared<WienerImpl<32>>(device,  overlap_factor);
+        return std::make_shared<WienerImpl<32>>(device, width, height, overlap_factor);
     }
 }
 

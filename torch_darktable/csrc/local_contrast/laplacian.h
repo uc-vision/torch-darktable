@@ -25,6 +25,8 @@ struct Laplacian {
     virtual float get_shadows() const = 0;
     virtual float get_highlights() const = 0;
     virtual float get_clarity() const = 0;
+    virtual int get_width() const = 0;
+    virtual int get_height() const = 0;
 };
 
 // Factory function for workspace creation (for reuse across multiple images)

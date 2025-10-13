@@ -311,7 +311,7 @@ struct BilateralImpl : public Bilateral
         TORCH_CHECK(luminance.dtype() == torch::kFloat32, "Input must be float32");
         TORCH_CHECK(luminance.dim() == 2, "Input must be 2D (H,W)");
         TORCH_CHECK(luminance.size(0) == height && luminance.size(1) == width,
-                    "Input dims must match (H,W)");
+                    "Input shape must match (H,W)");
         TORCH_CHECK(luminance.is_cuda(), "Input must be CUDA tensor");
     }
 
@@ -390,6 +390,8 @@ struct BilateralImpl : public Bilateral
     void set_sigma_r(float v) override { sigma_r = v; invalidate_buffers(); }
     float get_sigma_s() const override { return sigma_s; }
     float get_sigma_r() const override { return sigma_r; }
+    int get_width() const override { return width; }
+    int get_height() const override { return height; }
 };
 
 

@@ -50,9 +50,13 @@ def metrics_to_dict(metrics: torch.Tensor) -> dict[str, float | tuple[float, flo
 
 
 @beartype
-def metrics_from_dict(metrics_dict: dict[str, float | tuple[float, float, float]], device: torch.device = torch.device('cuda')) -> torch.Tensor:
+def metrics_from_dict(
+  metrics_dict: dict[str, float | tuple[float, float, float]], device: torch.device = torch.device('cuda')
+) -> torch.Tensor:
   """Convert named dictionary to 5-element metrics tensor."""
   rgb_mean = metrics_dict['rgb_mean']
+  assert isinstance(rgb_mean, tuple), 'RGB mean must be a tuple'
+
   return torch.tensor(
     [
       metrics_dict['log_mean'],
@@ -71,7 +75,9 @@ def print_metrics(metrics: torch.Tensor):
   """Print metrics in a nicely formatted way."""
   d = metrics_to_dict(metrics)
   print('Image Metrics:')
-  rgb = d["rgb_mean"]
+  rgb = d['rgb_mean']
+  assert isinstance(rgb, tuple), 'RGB mean must be a tuple'
+
   print(f'  Log Mean: {d["log_mean"]:.4f}')
   print(f'  Linear Mean: {d["linear_mean"]:.4f}')
   print(f'  RGB Mean: ({rgb[0]:.4f}, {rgb[1]:.4f}, {rgb[2]:.4f})')
@@ -114,12 +120,11 @@ def aces_tonemap(image: torch.Tensor, params: TonemapParameters, metrics: torch.
   assert image.dim() == 3 and image.size(2) == 3, 'Input must be (H, W, 3)'
   assert image.dtype == torch.float32, 'Input must be float32'
   assert image.device.type == 'cuda', 'Input must be on CUDA device'
-  
+
   if metrics is not None:
     assert metrics.numel() == 5 and metrics.dtype == torch.float32 and metrics.device.type == 'cuda'
     return extension.adaptive_aces_tonemap(image, metrics, params.to_cpp())
-  else:
-    return extension.aces_tonemap(image, params.to_cpp())
+  return extension.aces_tonemap(image, params.to_cpp())
 
 
 @beartype

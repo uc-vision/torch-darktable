@@ -1,8 +1,11 @@
 import argparse
 from pathlib import Path
 
-from torch_darktable.scripts.util import CameraSettings, camera_settings, load_raw_image, settings_for_file
+import torch
 
+from torch_darktable.scripts.util import CameraSettings, camera_settings, settings_for_file
+
+from .pipeline_ui import PipelineController
 from .ui import ProcessRawUI
 
 
@@ -21,21 +24,23 @@ def parse_args():
     '--camera', type=str, default=None, help='Camera name (one of ' + ', '.join(camera_settings.keys()) + ')'
   )
   parser.add_argument('--output-dir', type=Path, default=None, help='Output directory for JPEG files (default: /tmp)')
+  parser.add_argument('--device', type=str, default='cuda:0', help='Device to use (default: cuda:0)')
 
   return parser.parse_args()
 
 
 def interactive_debayer(
-  image_files: list[Path], current_index: int, camera_settings: CameraSettings, output_dir: Path = None
+  image_files: list[Path],
+  current_index: int,
+  camera_settings: CameraSettings,
+  device: torch.device,
+  output_dir: Path | None = None,
 ) -> None:
   """Interactive raw image processing with navigation."""
-
-  # Load initial image
-  bayer_image = load_raw_image(image_files[current_index], camera_settings)
-  device = bayer_image.device
-
-  # Create and show UI
-  ui = ProcessRawUI(image_files, current_index, camera_settings, bayer_image, device, output_dir)
+  camera_name = image_files[current_index].parent.stem
+  image_transform = camera_settings.get_image_transform(camera_name)
+  pipeline_controller = PipelineController(camera_settings=camera_settings, device=device, image_transform=image_transform)
+  ui = ProcessRawUI(image_files, current_index, pipeline_controller, output_dir)
   ui.show()
 
 
@@ -62,7 +67,7 @@ def main():
   output_dir = args.output_dir if args.output_dir is not None else Path('/tmp')
   print(f'JPEG files will be saved to: {output_dir.absolute()}')
 
-  interactive_debayer(image_files, current_index, cam_settings, args.output_dir)
+  interactive_debayer(image_files, current_index, cam_settings, torch.device(args.device), args.output_dir)
 
 
 if __name__ == '__main__':

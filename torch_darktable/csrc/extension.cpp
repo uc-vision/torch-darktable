@@ -59,14 +59,18 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
              py::arg("pattern"), py::arg("median_threshold") = 0.0f)
         .def("process", &PPG::process, "Process image with PPG algorithm",
              py::arg("input"))
-        .def_property("median_threshold", &PPG::get_median_threshold, &PPG::set_median_threshold, "Median threshold parameter");
+        .def_property("median_threshold", &PPG::get_median_threshold, &PPG::set_median_threshold, "Median threshold parameter")
+        .def_property_readonly("width", &PPG::get_width, "Image width")
+        .def_property_readonly("height", &PPG::get_height, "Image height");
 
     py::class_<RCD, std::shared_ptr<RCD>>(m, "RCD")
         .def(py::init(&create_rcd), "Create RCD demosaic",
              py::arg("device"), py::arg("width"), py::arg("height"),
              py::arg("pattern"))
         .def("process", &RCD::process, "Process image with RCD algorithm",
-             py::arg("input"));
+             py::arg("input"))
+        .def_property_readonly("width", &RCD::get_width, "Image width")
+        .def_property_readonly("height", &RCD::get_height, "Image height");
 
 
     py::class_<PostProcess, std::shared_ptr<PostProcess>>(m, "PostProcess")
@@ -80,7 +84,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         .def_property("color_smoothing_passes", &PostProcess::get_color_smoothing_passes, &PostProcess::set_color_smoothing_passes, "Number of color smoothing passes")
         .def_property("green_eq_local", &PostProcess::get_green_eq_local, &PostProcess::set_green_eq_local, "Enable local green equilibration")
         .def_property("green_eq_global", &PostProcess::get_green_eq_global, &PostProcess::set_green_eq_global, "Enable global green equilibration")
-        .def_property("green_eq_threshold", &PostProcess::get_green_eq_threshold, &PostProcess::set_green_eq_threshold, "Green equilibration threshold");
+        .def_property("green_eq_threshold", &PostProcess::get_green_eq_threshold, &PostProcess::set_green_eq_threshold, "Green equilibration threshold")
+        .def_property_readonly("width", &PostProcess::get_width, "Image width")
+        .def_property_readonly("height", &PostProcess::get_height, "Image height");
 
 
 
@@ -96,7 +102,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         .def_property("sigma", &Laplacian::get_sigma, &Laplacian::set_sigma, "Sigma parameter")
         .def_property("shadows", &Laplacian::get_shadows, &Laplacian::set_shadows, "Shadows parameter")
         .def_property("highlights", &Laplacian::get_highlights, &Laplacian::set_highlights, "Highlights parameter")
-        .def_property("clarity", &Laplacian::get_clarity, &Laplacian::set_clarity, "Clarity parameter");
+        .def_property("clarity", &Laplacian::get_clarity, &Laplacian::set_clarity, "Clarity parameter")
+        .def_property_readonly("width", &Laplacian::get_width, "Image width")
+        .def_property_readonly("height", &Laplacian::get_height, "Image height");
 
 
     py::class_<Bilateral, std::shared_ptr<Bilateral>>(m, "Bilateral")
@@ -107,7 +115,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         .def("process", &Bilateral::process, "Local contrast on luminance with bilateral grid",
              py::arg("luminance"), py::arg("detail"))
         .def_property("sigma_s", &Bilateral::get_sigma_s, &Bilateral::set_sigma_s, "Spatial sigma")
-        .def_property("sigma_r", &Bilateral::get_sigma_r, &Bilateral::set_sigma_r, "Range sigma");
+        .def_property("sigma_r", &Bilateral::get_sigma_r, &Bilateral::set_sigma_r, "Range sigma")
+        .def_property_readonly("width", &Bilateral::get_width, "Image width")
+        .def_property_readonly("height", &Bilateral::get_height, "Image height");
 
     // Note: Bilateral should be used as a class object from Python
 
@@ -207,7 +217,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
              py::arg("overlap_factor") = 4, py::arg("tile_size") = 32)
         .def("process", &Wiener::process, "Process image with Wiener filter",
              py::arg("input"), py::arg("noise_sigmas"))
-        .def_property_readonly("overlap_factor", &Wiener::get_overlap_factor, "Overlap factor (read-only)");
+        .def_property_readonly("overlap_factor", &Wiener::get_overlap_factor, "Overlap factor (read-only)")
+        .def_property_readonly("width", &Wiener::get_width, "Image width")
+        .def_property_readonly("height", &Wiener::get_height, "Image height");
 
 
 }

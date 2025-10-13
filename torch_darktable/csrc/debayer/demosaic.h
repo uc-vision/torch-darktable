@@ -46,6 +46,8 @@ struct PostProcess {
     virtual bool get_green_eq_local() const = 0;
     virtual bool get_green_eq_global() const = 0;
     virtual float get_green_eq_threshold() const = 0;
+    virtual int get_width() const = 0;
+    virtual int get_height() const = 0;
 };
 
 // Factory functions - implementations are in .cu files

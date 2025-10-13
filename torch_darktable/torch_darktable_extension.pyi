@@ -21,6 +21,8 @@ class PPG:
   ) -> None: ...
   def process(self, input: torch.Tensor) -> torch.Tensor: ...
   median_threshold: float
+  width: int
+  height: int
 
 class RCD:
   def __init__(
@@ -31,6 +33,8 @@ class RCD:
     pattern: int,
   ) -> None: ...
   def process(self, input: torch.Tensor) -> torch.Tensor: ...
+  width: int
+  height: int
 
 class PostProcess:
   def __init__(
@@ -49,6 +53,8 @@ class PostProcess:
   green_eq_local: bool
   green_eq_global: bool
   green_eq_threshold: float
+  width: int
+  height: int
 
 # 12-bit encoding/decoding functions (internal - use high-level API instead)
 def encode12_u16(image: torch.Tensor, ids_format: bool = ...) -> torch.Tensor: ...
@@ -75,6 +81,8 @@ class Laplacian:
   shadows: float
   highlights: float
   clarity: float
+  width: int
+  height: int
 
 class Bilateral:
   def __init__(
@@ -88,6 +96,8 @@ class Bilateral:
   def process(self, luminance: torch.Tensor, detail: float) -> torch.Tensor: ...
   sigma_s: float
   sigma_r: float
+  width: int
+  height: int
 
 # Tone mapping parameters struct
 class TonemapParams:
@@ -152,6 +162,8 @@ class Wiener:
   def process(self, input: torch.Tensor, noise_sigmas: torch.Tensor) -> torch.Tensor: ...
   @property
   def overlap_factor(self) -> int: ...
+  width: int
+  height: int
 
 # Wiener denoiser creation function
 def create_wiener(

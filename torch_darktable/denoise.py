@@ -40,7 +40,7 @@ class Wiener:
     self._device = device
 
   def __repr__(self):
-    return f'Wiener(overlap_factor={self.overlap_factor} tile_size={self._tile_size})'
+    return f'Wiener({self._wiener.width}x{self._wiener.height}, overlap_factor={self.overlap_factor}, tile_size={self._tile_size})'
 
   def process_luminance(self, image: torch.Tensor, noise: float | torch.Tensor) -> torch.Tensor:
     # Process luminance channel only (single channel processing)
@@ -50,6 +50,7 @@ class Wiener:
 
   def process_log_luminance(self, image: torch.Tensor, noise: float | torch.Tensor, eps: float = 1e-4) -> torch.Tensor:
     log_luminance = extension.compute_log_luminance(image, eps=eps)
+
     modified = self.process(log_luminance.unsqueeze(2), noise).squeeze(2)
     return extension.modify_log_luminance(image, modified, eps=eps)
 
@@ -76,6 +77,7 @@ class Wiener:
         Denoised image of same shape
     """
     # Determine channels from input image
+    assert image.dim() == 3, f'image must have 3 dimensions, got {image.shape}'
     channels = image.size(2)
     if channels not in {1, 3}:
       raise ValueError(f'image channels must be 1 or 3, got {channels}')

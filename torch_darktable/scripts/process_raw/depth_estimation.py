@@ -10,12 +10,12 @@ from transformers import AutoImageProcessor, AutoModelForDepthEstimation
 from torch_darktable.scripts.util import cv2, display_rgb
 
 models = dict(
-  small="depth-anything/Depth-Anything-V2-Small-hf",
+  small='depth-anything/Depth-Anything-V2-Small-hf',
 )
+
 
 @dataclass
 class DepthEstimation:
-
   model: torch.nn.Module
   image_processor: AutoImageProcessor
 
@@ -25,7 +25,7 @@ class DepthEstimation:
 
   @staticmethod
   def create_model(name: str = 'small'):
-    assert name in models, f"Model {name} not found. Available models: {models.keys()}"
+    assert name in models, f'Model {name} not found. Available models: {models.keys()}'
 
     image_processor = AutoImageProcessor.from_pretrained(models[name], use_fast=True)
     model = AutoModelForDepthEstimation.from_pretrained(models[name])
@@ -33,7 +33,7 @@ class DepthEstimation:
     return DepthEstimation(model=model, image_processor=image_processor)
 
   def estimate_depth(self, image: torch.Tensor) -> torch.Tensor:
-    inputs = self.image_processor(images=image, return_tensors="pt")  # type: ignore
+    inputs = self.image_processor(images=image, return_tensors='pt')  # type: ignore
 
     outputs = self.compiled_model(**inputs)
     predicted_depth = outputs.predicted_depth.squeeze(0)
@@ -41,7 +41,7 @@ class DepthEstimation:
     return (predicted_depth - predicted_depth.min()) / (predicted_depth.max() - predicted_depth.min())
 
 
-def get_color_map(name=cv2.COLORMAP_TURBO, device=torch.device('cuda')):
+def get_color_map(name=cv2.COLORMAP_TURBO, device=torch.device('cuda:0')):
   table = np.arange(256, dtype=np.uint8)[:, None]
   colors = cv2.applyColorMap(table, name)
 
@@ -77,5 +77,5 @@ def main():
   display_rgb('Depth', color_map)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
   main()

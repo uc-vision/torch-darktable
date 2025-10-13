@@ -7,6 +7,8 @@ struct Wiener {
     virtual ~Wiener() = default;
     virtual torch::Tensor process(const torch::Tensor &input, const torch::Tensor &noise_sigmas) = 0;
     virtual int get_overlap_factor() const = 0;
+    virtual int get_width() const = 0;
+    virtual int get_height() const = 0;
 };
 
 std::shared_ptr<Wiener> create_wiener(

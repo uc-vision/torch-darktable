@@ -21,7 +21,6 @@ class PackedFormat(Enum):
   Packed12_IDS = 1
 
 
-
 @beartype
 def rgb_to_bayer(rgb_tensor: torch.Tensor, pattern: BayerPattern = BayerPattern.RGGB) -> torch.Tensor:
   """Convert RGB tensor to Bayer pattern.
@@ -35,21 +34,23 @@ def rgb_to_bayer(rgb_tensor: torch.Tensor, pattern: BayerPattern = BayerPattern.
   """
   c1, c2, c3, c4 = channels(pattern)
 
-  stacked = torch.stack((
-    rgb_tensor[0::2, 0::2, c1],  # R (even rows, even cols)
-    rgb_tensor[0::2, 1::2, c2],  # G (even rows, odd cols)
-    rgb_tensor[1::2, 0::2, c3],  # G (odd rows, even cols)
-    rgb_tensor[1::2, 1::2, c4],  # B (odd rows, odd cols)
-  ), dim=-1)
+  stacked = torch.stack(
+    (
+      rgb_tensor[0::2, 0::2, c1],  # R (even rows, even cols)
+      rgb_tensor[0::2, 1::2, c2],  # G (even rows, odd cols)
+      rgb_tensor[1::2, 0::2, c3],  # G (odd rows, even cols)
+      rgb_tensor[1::2, 1::2, c4],  # B (odd rows, odd cols)
+    ),
+    dim=-1,
+  )
 
   return expand_bayer(stacked)
 
 
 @beartype
-def load_as_bayer(image_path: Path,
-  pattern: BayerPattern = BayerPattern.RGGB,
-  device: torch.device = torch.device('cuda')
-  ) -> torch.Tensor:
+def load_as_bayer(
+  image_path: Path, pattern: BayerPattern = BayerPattern.RGGB, device: torch.device = torch.device('cuda')
+) -> torch.Tensor:
   """Load RGB image as torch tensor on GPU.
 
   Returns:
@@ -85,7 +86,7 @@ def channels(pattern: BayerPattern) -> tuple[int, int, int, int]:
     case BayerPattern.RGGB:
       return (0, 1, 1, 2)
     case BayerPattern.BGGR:
-      return (2, 1, 1 ,0)
+      return (2, 1, 1, 0)
     case BayerPattern.GRBG:
       return (1, 0, 1, 2)
     case BayerPattern.GBRG:
@@ -95,22 +96,25 @@ def channels(pattern: BayerPattern) -> tuple[int, int, int, int]:
 
 
 def stack_bayer(bayer_image: torch.Tensor) -> torch.Tensor:
-  return torch.stack((
-    bayer_image[0::2, 0::2],   # Red
-    bayer_image[0::2, 1::2],   # Green
-    bayer_image[1::2, 0::2],   # Green
-    bayer_image[1::2, 1::2]    # Blue
-  ), dim=-1)
+  return torch.stack(
+    (
+      bayer_image[0::2, 0::2],  # Red
+      bayer_image[0::2, 1::2],  # Green
+      bayer_image[1::2, 0::2],  # Green
+      bayer_image[1::2, 1::2],  # Blue
+    ),
+    dim=-1,
+  )
 
 
 def expand_bayer(x):
-    h, w = x.shape[0], x.shape[1]
-    result = torch.zeros(h * 2, w * 2, device=x.device, dtype=x.dtype)
+  h, w = x.shape[0], x.shape[1]
+  result = torch.zeros(h * 2, w * 2, device=x.device, dtype=x.dtype)
 
-    r, g1, g2, b = x.unbind(dim=-1)
+  r, g1, g2, b = x.unbind(dim=-1)
 
-    result[0::2, 0::2] = r    # Red
-    result[0::2, 1::2] = g1   # Green
-    result[1::2, 0::2] = g2   # Green
-    result[1::2, 1::2] = b    # Blue
-    return result
+  result[0::2, 0::2] = r  # Red
+  result[0::2, 1::2] = g1  # Green
+  result[1::2, 0::2] = g2  # Green
+  result[1::2, 1::2] = b  # Blue
+  return result

@@ -62,7 +62,8 @@ def test_laplacian(image_path: Path, args):
   workspace, params = create_laplacian_algorithm(input_rgb.device, height, width, args)
 
   print(
-    f'Parameters: gamma={params.num_gamma}, sigma={params.sigma}, shadows={params.shadows}, highlights={params.highlights}, clarity={params.clarity}'
+    f'Parameters: gamma={params.num_gamma}, sigma={params.sigma},'
+    f'shadows={params.shadows}, highlights={params.highlights}, clarity={params.clarity}'
   )
 
   print('Applying local Laplacian filter to RGB image...')

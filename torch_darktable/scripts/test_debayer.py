@@ -51,7 +51,8 @@ def test_demosaic(image_path: Path, pattern: BayerPattern, args):
   # Apply post-processing if requested
   if args.post_processing:
     print(
-      f'Applying post-processing: smoothing={args.color_smoothing_passes}, green_eq_local={args.green_eq_local}, green_eq_global={args.green_eq_global}'
+      f'Applying post-processing: smoothing={args.color_smoothing_passes},'
+      f'green_eq_local={args.green_eq_local}, green_eq_global={args.green_eq_global}'
     )
 
     postprocess_alg = create_postprocess_algorithm(device, width, height, pattern, args)

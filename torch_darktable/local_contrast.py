@@ -89,11 +89,14 @@ def create_bilateral(
       Bilateral algorithm object
   """
   width, height = image_size
+
   return extension.Bilateral(device, width, height, sigma_s, sigma_r)
 
 
 @beartype
 def bilateral_rgb(bilateral: 'extension.Bilateral', input_image: torch.Tensor, detail: float) -> torch.Tensor:
+  assert input_image.dim() == 3, f'image must have 3 dimensions, got {input_image.shape}'
+
   luminance = extension.compute_luminance(input_image)
   return extension.modify_luminance(input_image, bilateral.process(luminance, float(detail)))
 

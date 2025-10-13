@@ -12,6 +12,8 @@ struct Bilateral {
     // Read accessors (for concise property bindings)
     virtual float get_sigma_s() const = 0;
     virtual float get_sigma_r() const = 0;
+    virtual int get_width() const = 0;
+    virtual int get_height() const = 0;
 };
 
 std::shared_ptr<Bilateral> create_bilateral(

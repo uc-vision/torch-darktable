@@ -397,6 +397,8 @@ struct PostProcessImpl : public PostProcess {
     bool get_green_eq_local() const override { return green_eq_local_; }
     bool get_green_eq_global() const override { return green_eq_global_; }
     float get_green_eq_threshold() const override { return green_eq_threshold_; }
+    int get_width() const override { return width_; }
+    int get_height() const override { return height_; }
 };
 
 std::shared_ptr<PostProcess> create_postprocess(torch::Device device,

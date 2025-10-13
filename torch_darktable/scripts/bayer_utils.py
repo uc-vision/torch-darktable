@@ -1,5 +1,6 @@
 import numpy as np
-from ..debayer import BayerPattern
+
+from torch_darktable.debayer import BayerPattern
 
 # Pattern mapping to [R, G1, G2, B] position indices
 pattern_map = {

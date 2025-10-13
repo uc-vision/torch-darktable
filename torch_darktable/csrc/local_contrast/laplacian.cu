@@ -599,6 +599,8 @@ struct LaplacianImpl : public Laplacian
     float get_shadows() const override { return shadows; }
     float get_highlights() const override { return highlights; }
     float get_clarity() const override { return clarity; }
+    int get_width() const override { return width; }
+    int get_height() const override { return height; }
 
     // Adjustable parameter setters
     void set_sigma(float new_sigma) override { sigma = new_sigma; }
