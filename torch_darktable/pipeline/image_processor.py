@@ -4,6 +4,7 @@ from beartype import beartype
 import torch
 
 import torch_darktable as td
+from torch_darktable.pipeline.camera_settings import CameraSettings
 
 from .config import Debayer, ImageProcessingSettings, ToneMapper
 from .util import lerp_none, normalize_image, resize_longest_edge
@@ -19,7 +20,7 @@ class ImageProcessor:
     packed_format: td.PackedFormat,
     settings: ImageProcessingSettings,
     device: torch.device,
-    white_balance: tuple[float, float, float],
+    white_balance: tuple[float, float, float] | None,
   ):
     """Initialize the pipeline with device, camera settings and processing settings.
 
@@ -29,7 +30,7 @@ class ImageProcessor:
         packed_format: Raw data packing format
         settings: Processing settings
         device: CUDA device for processing
-        white_balance: White balance coefficients from camera settings
+        white_balance: White balance coefficients from camera settings (None to disable)
     """
 
     assert device.index is not None, f'Device not fully specified: {device}'
@@ -64,7 +65,20 @@ class ImageProcessor:
     )
 
     self.wiener_workspace = td.create_wiener(self.device, self.image_size)
-    self.white_balance = torch.tensor(white_balance, device=self.device).to(torch.float32)
+    self.white_balance = torch.tensor(white_balance, device=self.device).to(torch.float32) if white_balance is not None else None
+
+  @staticmethod
+  def from_camera_settings(camera_settings: CameraSettings, device: torch.device):
+    image_settings = camera_settings.preset
+
+    return ImageProcessor(
+      camera_settings.image_size,
+      camera_settings.bayer_pattern,
+      camera_settings.packed_format,
+      image_settings,
+      device=device,
+      white_balance=camera_settings.white_balance,
+    )
 
   def update_settings(self, settings: ImageProcessingSettings):
     self.settings = settings
@@ -117,7 +131,7 @@ class ImageProcessor:
   def debayer(self, bayer_image: torch.Tensor) -> torch.Tensor:
     assert bayer_image.ndim == 2, f'Bayer image must have 2 dimensions, got {bayer_image.shape}'
 
-    if self.settings.enable_white_balance:
+    if self.white_balance is not None:
       bayer_image = td.apply_white_balance(bayer_image, self.white_balance, self.bayer_pattern)
 
     if self.settings.debayer == Debayer.bilinear:

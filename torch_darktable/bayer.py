@@ -117,4 +117,4 @@ def expand_bayer(x):
   result[0::2, 1::2] = g1  # Green
   result[1::2, 0::2] = g2  # Green
   result[1::2, 1::2] = b  # Blue
-  return result
+  return result.unsqueeze(-1)

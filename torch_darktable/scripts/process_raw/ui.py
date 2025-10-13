@@ -5,7 +5,7 @@ from matplotlib.widgets import Button, Slider
 import numpy as np
 import torch
 
-from torch_darktable.scripts.util import CameraSettings
+from torch_darktable.pipeline.camera_settings import CameraSettings
 
 from . import jpeg_utils
 from .histogram_window import HistogramWindow

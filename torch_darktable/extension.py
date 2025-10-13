@@ -25,6 +25,7 @@ def _load_cuda_extension(debug: bool = False, verbose: bool = False):
     'tonemap/reinhard.cu',
     'white_balance.cu',
     'denoise/denoise.cu',
+    'jpeg_encoder.cu',
   ]
   sources = [str(source_dir / f) for f in source_files]
 
@@ -41,6 +42,7 @@ def _load_cuda_extension(debug: bool = False, verbose: bool = False):
     extra_cuda_cflags=['-G', '-O0', '-lineinfo']
     if debug
     else ['-O3', '--expt-relaxed-constexpr', '--use_fast_math', '-std=c++17'],
+    extra_ldflags=['-lnvjpeg'],
   )
 
 

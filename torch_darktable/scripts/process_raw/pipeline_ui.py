@@ -8,16 +8,16 @@ from matplotlib.widgets import Slider
 import torch
 
 import torch_darktable as td
+from torch_darktable.pipeline.camera_settings import CameraSettings, load_raw_bytes_stripped
 from torch_darktable.pipeline.config import Debayer, ImageProcessingSettings, ToneMapper
 from torch_darktable.pipeline.image_processor import ImageProcessor
 from torch_darktable.pipeline.presets import presets
-from torch_darktable.pipeline.transform import transform
+from torch_darktable.pipeline.transform import ImageTransform, transform
 from torch_darktable.scripts.process_raw.ui_builder import (
   UILayoutManager,
   create_checkboxes,
   create_radio_buttons,
 )
-from torch_darktable.scripts.util import CameraSettings, ImageTransform, load_raw_bytes_stripped
 
 
 class PipelineController:
@@ -35,11 +35,11 @@ class PipelineController:
     self.image_transform = image_transform
 
     # Initialize settings with camera default preset
-    self.settings = presets[camera_settings.preset]
-    self.current_preset = camera_settings.preset
+    self.settings = camera_settings.preset
+    self.current_preset = 'default'
 
     # Track modified presets - each preset can have user modifications
-    self.modified_presets = {}
+    self.modified_presets = {'default': camera_settings.preset}
     for preset_name in presets:
       self.modified_presets[preset_name] = presets[preset_name]
 

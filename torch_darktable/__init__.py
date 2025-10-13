@@ -1,7 +1,7 @@
 """PyTorch CUDA extensions for image processing and computer vision."""
 
 # Import all modules
-from . import bayer, color_conversion, debayer, denoise, extension, local_contrast, tonemap, white_balance
+from . import bayer, color_conversion, debayer, denoise, extension, jpeg, local_contrast, tonemap, white_balance
 from .bayer import BayerPattern, PackedFormat, load_as_bayer, rgb_to_bayer
 from .color_conversion import (
   color_transform_3x3,
@@ -32,6 +32,7 @@ from .debayer import (
   encode12_u16,
 )
 from .denoise import Wiener, create_wiener, estimate_channel_noise
+from .jpeg import InputFormat, Jpeg, JpegException, Subsampling
 from .local_contrast import (
   LaplacianParams,
   bilateral_rgb,
@@ -54,8 +55,12 @@ from .white_balance import apply_white_balance, estimate_white_balance
 
 __all__ = [
   'BayerPattern',
+  'InputFormat',
+  'Jpeg',
+  'JpegException',
   'LaplacianParams',
   'PackedFormat',
+  'Subsampling',
   'TonemapParameters',
   'Wiener',
   'aces_tonemap',
@@ -87,6 +92,7 @@ __all__ = [
   'estimate_channel_noise',
   'estimate_white_balance',
   'extension',
+  'jpeg',
   'lab_to_rgb',
   'lab_to_xyz',
   'linear_tonemap',

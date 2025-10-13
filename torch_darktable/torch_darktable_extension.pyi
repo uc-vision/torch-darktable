@@ -173,3 +173,28 @@ def create_wiener(
   overlap_factor: int = ...,
   tile_size: int = ...,
 ) -> Wiener: ...
+
+# JPEG encoding
+class JpegException(Exception): ...
+
+class JpegInputFormat(Enum):
+  BGR: int
+  RGB: int
+  BGRI: int
+  RGBI: int
+
+class JpegSubsampling(Enum):
+  CSS_444: int
+  CSS_422: int
+  CSS_GRAY: int
+
+class Jpeg:
+  def __init__(self) -> None: ...
+  def encode(
+    self,
+    image: torch.Tensor,
+    quality: int,
+    input_format: int,
+    subsampling: int,
+    progressive: bool,
+  ) -> torch.Tensor: ...

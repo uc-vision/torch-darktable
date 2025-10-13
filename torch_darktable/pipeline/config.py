@@ -62,8 +62,6 @@ class ImageProcessingSettings:
   # Vibrance adjustment
   vibrance: float = float_field(0.0, range=(-1.0, 1.0), description='Vibrance')
 
-  enable_white_balance: bool = bool_field(True, description='Apply white balance')
-
   # Temporal averaging to smooth intensity scaling over time
   enable_temporal_average: bool = bool_field(True, description='Enable temporal averaging')
   moving_average: float = float_field(0.02, range=(0.0, 1.0), description='Tonemap moving average')

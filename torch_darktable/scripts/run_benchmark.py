@@ -3,12 +3,14 @@ from collections.abc import Callable
 from functools import partial
 from pathlib import Path
 
+import cv2
 import torch
 
 import torch_darktable as td
 from torch_darktable import BayerPattern
+from torch_darktable.bayer import rgb_to_bayer
 from torch_darktable.local_contrast import LaplacianParams
-from torch_darktable.utilities import load_image, rgb_to_bayer
+from torch_darktable.scripts.util import load_image
 
 
 def benchmark(name: str, func: Callable, *args, warmup_iters: int = 5, bench_iters: int = 50) -> float:
@@ -42,6 +44,7 @@ def run_benchmark(
   pattern: BayerPattern,
   warmup_iters: int = 5,
   bench_iters: int = 50,
+  jpeg_quality: int = 90,
 ):
   torch.set_grad_enabled(False)
 
@@ -180,6 +183,30 @@ def run_benchmark(
   )
 
   print()
+  print('=== JPEG Encoding Benchmarks ===')
+
+  rgb_np = (rgb_tensor.cpu().numpy() * 255).astype('uint8')
+  bgr_np = cv2.cvtColor(rgb_np, cv2.COLOR_RGB2BGR)
+  bgri_u8 = torch.from_numpy(bgr_np).cuda()
+
+  jpeg = td.Jpeg()
+  benchmark(
+    f'JPEG Encode (Q{jpeg_quality})',
+    partial(jpeg.encode, quality=jpeg_quality, input_format=td.InputFormat.BGRI),
+    bgri_u8,
+    warmup_iters=warmup_iters,
+    bench_iters=bench_iters,
+  )
+
+  benchmark(
+    f'JPEG Encode Progressive (Q{jpeg_quality})',
+    partial(jpeg.encode, quality=jpeg_quality, input_format=td.InputFormat.BGRI, progressive=True),
+    bgri_u8,
+    warmup_iters=warmup_iters,
+    bench_iters=bench_iters,
+  )
+
+  print()
 
 
 def main():
@@ -205,10 +232,22 @@ def main():
     default=100,
     help='Number of benchmark iterations (default: 50)',
   )
+  parser.add_argument(
+    '--jpeg-quality',
+    type=int,
+    default=90,
+    help='JPEG quality for encoding benchmarks (default: 90)',
+  )
 
   args = parser.parse_args()
 
-  run_benchmark(args.image, BayerPattern[args.pattern], args.warmup_iters, args.bench_iters)
+  run_benchmark(
+    args.image,
+    BayerPattern[args.pattern],
+    args.warmup_iters,
+    args.bench_iters,
+    args.jpeg_quality,
+  )
 
 
 if __name__ == '__main__':

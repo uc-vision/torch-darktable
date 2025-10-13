@@ -6,9 +6,9 @@ import cv2
 import numpy as np
 
 from torch_darktable import BayerPattern, create_postprocess, create_ppg, create_rcd
+from torch_darktable.bayer import rgb_to_bayer
 from torch_darktable.debayer import create_bilinear
-from torch_darktable.scripts.util import display_rgb
-from torch_darktable.utilities import load_image, rgb_to_bayer
+from torch_darktable.scripts.util import display_rgb, load_image
 
 
 def create_postprocess_algorithm(device, width, height, pattern, args):

@@ -6,6 +6,7 @@
 #include "tonemap/tonemap.h"
 #include "white_balance.h"
 #include "denoise/denoise.h"
+#include "jpeg_encoder.h"
 
 #include <ATen/ATen.h>
 #include <pybind11/pybind11.h>
@@ -221,6 +222,28 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         .def_property_readonly("width", &Wiener::get_width, "Image width")
         .def_property_readonly("height", &Wiener::get_height, "Image height");
 
+    // JPEG encoding
+    py::register_exception<JpegException>(m, "JpegException");
+
+    py::class_<JpegCoder, std::shared_ptr<JpegCoder>>(m, "Jpeg")
+        .def(py::init(&create_jpeg_coder))
+        .def("encode", [](JpegCoder& self, torch::Tensor const& data, int quality, int input_format, int subsampling, bool progressive) {
+          return self.encode(data, quality, static_cast<JpegInputFormat>(input_format), static_cast<JpegSubsampling>(subsampling), progressive);
+        })
+        .def("__repr__", [](const JpegCoder &a) { return "Jpeg"; });
+
+    py::enum_<JpegInputFormat>(m, "JpegInputFormat")
+      .value("BGR", JpegInputFormat::BGR)
+      .value("RGB", JpegInputFormat::RGB)
+      .value("BGRI", JpegInputFormat::BGRI)
+      .value("RGBI", JpegInputFormat::RGBI)
+      .export_values();
+
+    py::enum_<JpegSubsampling>(m, "JpegSubsampling")
+      .value("CSS_444", JpegSubsampling::CSS_444)
+      .value("CSS_422", JpegSubsampling::CSS_422)
+      .value("CSS_GRAY", JpegSubsampling::CSS_GRAY)
+      .export_values();
 
 }
 

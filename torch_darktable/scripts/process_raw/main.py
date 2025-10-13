@@ -3,7 +3,7 @@ from pathlib import Path
 
 import torch
 
-from torch_darktable.scripts.util import CameraSettings, camera_settings, settings_for_file
+from torch_darktable.pipeline.camera_settings import CameraSettings, camera_settings, settings_for_file
 
 from .pipeline_ui import PipelineController
 from .ui import ProcessRawUI
@@ -40,6 +40,7 @@ def interactive_debayer(
   camera_name = image_files[current_index].parent.stem
   image_transform = camera_settings.get_image_transform(camera_name)
   pipeline_controller = PipelineController(camera_settings=camera_settings, device=device, image_transform=image_transform)
+
   ui = ProcessRawUI(image_files, current_index, pipeline_controller, output_dir)
   ui.show()
 
