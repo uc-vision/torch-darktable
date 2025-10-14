@@ -15,63 +15,104 @@ class Bilinear5x5:
     return bilinear5x5_demosaic(image, self.bayer_pattern)
 
 
-def create_ppg(
-  device: torch.device,
-  image_size: tuple[int, int],
-  bayer_pattern: BayerPattern,
-  *,
-  median_threshold: float = 0.0,
-) -> extension.PPG:
-  """
-  Create a PPG demosaic object.
-  """
-  width, height = image_size
-  return extension.PPG(device, width, height, bayer_pattern.value, median_threshold)
+class PPG:
+  """PPG demosaic with shape validation."""
+
+  @beartype
+  def __init__(
+    self,
+    device: torch.device,
+    image_size: tuple[int, int],
+    bayer_pattern: BayerPattern,
+    *,
+    median_threshold: float = 0.0,
+  ):
+    width, height = image_size
+    self._ppg = extension.PPG(device, width, height, bayer_pattern.value, median_threshold)
+
+  def process(self, input_tensor: torch.Tensor) -> torch.Tensor:
+    expected_shape = (self._ppg.height, self._ppg.width, 1)
+    if input_tensor.shape != expected_shape:
+      raise RuntimeError(f'PPG input shape {input_tensor.shape} != expected {expected_shape}')
+    return self._ppg.process(input_tensor)
+
+  @property
+  def image_size(self) -> tuple[int, int]:
+    return (self._ppg.width, self._ppg.height)
+
+  @property
+  def median_threshold(self) -> float:
+    return self._ppg.median_threshold
 
 
-@beartype
-def create_rcd(
-  device: torch.device,
-  image_size: tuple[int, int],
-  bayer_pattern: BayerPattern,
-) -> extension.RCD:
-  """
-  Create an RCD demosaic object.
-  """
-  width, height = image_size
-  return extension.RCD(device, width, height, bayer_pattern.value)
+class RCD:
+  """RCD demosaic with shape validation."""
+
+  @beartype
+  def __init__(
+    self,
+    device: torch.device,
+    image_size: tuple[int, int],
+    bayer_pattern: BayerPattern,
+  ):
+    width, height = image_size
+    self._rcd = extension.RCD(device, width, height, bayer_pattern.value)
+
+  def process(self, input_tensor: torch.Tensor) -> torch.Tensor:
+    expected_shape = (self._rcd.height, self._rcd.width, 1)
+    if input_tensor.shape != expected_shape:
+      raise RuntimeError(f'RCD input shape {input_tensor.shape} != expected {expected_shape}')
+    return self._rcd.process(input_tensor)
+
+  @property
+  def image_size(self) -> tuple[int, int]:
+    return (self._rcd.width, self._rcd.height)
 
 
-@beartype
-def create_bilinear(bayer_pattern: BayerPattern) -> Bilinear5x5:
-  return Bilinear5x5(bayer_pattern)
+class PostProcess:
+  """PostProcess with shape validation."""
 
+  @beartype
+  def __init__(
+    self,
+    device: torch.device,
+    image_size: tuple[int, int],
+    bayer_pattern: BayerPattern,
+    *,
+    color_smoothing_passes: int = 0,
+    green_eq_local: bool = False,
+    green_eq_global: bool = False,
+    green_eq_threshold: float = 0.04,
+  ):
+    width, height = image_size
+    self._postprocess = extension.PostProcess(
+      device,
+      width,
+      height,
+      bayer_pattern.value,
+      color_smoothing_passes,
+      green_eq_local,
+      green_eq_global,
+      green_eq_threshold,
+    )
 
-@beartype
-def create_postprocess(
-  device: torch.device,
-  image_size: tuple[int, int],
-  bayer_pattern: BayerPattern,
-  *,
-  color_smoothing_passes: int = 0,
-  green_eq_local: bool = False,
-  green_eq_global: bool = False,
-  green_eq_threshold: float = 0.04,
-) -> extension.PostProcess:
-  """
-  Create a post-process object for demosaiced images.
-  """
-  width, height = image_size
-  return extension.PostProcess(
-    device,
-    width,
-    height,
-    bayer_pattern.value,
-    color_smoothing_passes,
-    green_eq_local,
-    green_eq_global,
-    green_eq_threshold,
-  )
+  def process(self, input_tensor: torch.Tensor) -> torch.Tensor:
+    expected_shape = (self._postprocess.height, self._postprocess.width, 3)
+    if input_tensor.shape != expected_shape:
+      raise RuntimeError(f'PostProcess input shape {input_tensor.shape} != expected {expected_shape}')
+    return self._postprocess.process(input_tensor)
+
+  @property
+  def image_size(self) -> tuple[int, int]:
+    return (self._postprocess.width, self._postprocess.height)
+
+  @property
+  def color_smoothing_passes(self) -> int:
+    return self._postprocess.color_smoothing_passes
+
+  @property
+  def green_eq_threshold(self) -> float:
+    return self._postprocess.green_eq_threshold
 
 
 # 12-bit packing/unpacking functions
@@ -151,11 +192,12 @@ def bilinear5x5_demosaic(image: torch.Tensor, bayer_pattern: BayerPattern) -> to
 
 __all__ = [
   'BayerPattern',
+  'Bilinear5x5',
   'PackedFormat',
+  'PPG',
+  'RCD',
+  'PostProcess',
   'bilinear5x5_demosaic',
-  'create_postprocess',
-  'create_ppg',
-  'create_rcd',
   'decode12',
   'decode12_float',
   'decode12_half',

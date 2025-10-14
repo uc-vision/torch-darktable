@@ -5,8 +5,6 @@ from matplotlib.widgets import Button, Slider
 import numpy as np
 import torch
 
-from torch_darktable.pipeline.camera_settings import CameraSettings
-
 from . import jpeg_utils
 from .histogram_window import HistogramWindow
 from .jpeg_preview_window import JpegPreviewWindow
@@ -32,14 +30,19 @@ def create_stride_slider(layout):
   return stride_slider
 
 
+def create_index_slider(layout, num_images, current_index):
+  """Create index slider for direct navigation."""
+  index_rect = layout.add_component(0.03)
+  ax_index = create_clean_axes(index_rect, for_slider=True)
+  return Slider(ax_index, 'Index', 0, num_images - 1, valinit=current_index, valfmt='%d')
+
+
 def create_info_display(layout, image_shape):
   """Create info text display showing image dimensions."""
   info_rect = layout.add_component(0.025)
   ax_info = create_clean_axes(info_rect, axis_off=True)
   h, w = image_shape[:2]
-  text_left = ax_info.text(
-    0.02, 0.5, f'{w}x{h}', fontsize=8, verticalalignment='center', transform=ax_info.transAxes
-  )
+  text_left = ax_info.text(0.02, 0.5, f'{w}x{h}', fontsize=8, verticalalignment='center', transform=ax_info.transAxes)
   text_right = ax_info.text(
     0.98, 0.5, '', fontsize=8, verticalalignment='center', horizontalalignment='right', transform=ax_info.transAxes
   )
@@ -97,6 +100,10 @@ class ProcessRawUI:
       self.processed_image = self.pipeline_controller.process_image(self.bayer_image)
     return self.processed_image
 
+  def _get_processed_image_numpy(self) -> np.ndarray:
+    """Get processed image as numpy array."""
+    return self._get_processed_image().cpu().numpy()
+
   def _on_pipeline_change(self):
     """Called when pipeline settings change."""
     self.processed_image = None
@@ -127,6 +134,7 @@ class ProcessRawUI:
 
     self.btn_prev, self.btn_next, self.btn_rotate = create_navigation_buttons(layout)
     self.stride_slider = create_stride_slider(layout)
+    self.index_slider = create_index_slider(layout, len(self.image_files), self.current_index)
     self.pipeline_controller.create_pipeline_ui(layout)
     self.info_text_left, self.info_text_right = create_info_display(layout, self.bayer_image.shape)
     self.btn_save, self.btn_reset, self.btn_levels, self.btn_jpeg = create_action_buttons(layout)
@@ -148,7 +156,7 @@ class ProcessRawUI:
     """Update the display according to the current mode."""
     current_path = self.image_files[self.current_index]
 
-    processed = self._get_processed_image().cpu().numpy()
+    processed = self._get_processed_image_numpy()
 
     # Update matplotlib display
     self.im.set_data(processed)
@@ -163,6 +171,7 @@ class ProcessRawUI:
   def _navigate_to(self, new_index):
     """Navigate to a specific index with wrapping."""
     self.current_index = new_index % len(self.image_files)
+    self.index_slider.set_val(self.current_index)
     self.bayer_image = self.pipeline_controller.load_image(self.image_files[self.current_index])
     self.processed_image = None  # Invalidate cache when loading new image
     processed = self._update_and_draw()
@@ -196,12 +205,9 @@ class ProcessRawUI:
       if self.jpeg_window is not None and self.jpeg_window.is_open():
         self.jpeg_window.update_display(processed)
 
-    def on_stride(val):
-      self.stride = int(val)
-
     def on_save_jpeg(event):
       save_path = self._get_jpeg_save_path()
-      processed = self._get_processed_image()
+      processed = self._get_processed_image_numpy()
 
       # Save using jpeg_utils
       jpeg_utils.save_jpeg_to_disk(processed, save_path, quality=95, progressive=False)
@@ -221,7 +227,7 @@ class ProcessRawUI:
         self.histogram_window.update_display(self.bayer_image, self.camera_settings)
 
     def on_show_jpeg_preview(event):
-      processed = self._get_processed_image()
+      processed = self._get_processed_image_numpy()
 
       if self.jpeg_window is None or not self.jpeg_window.is_open():
         self.jpeg_window = JpegPreviewWindow(self)
@@ -231,8 +237,17 @@ class ProcessRawUI:
         self.jpeg_window.fig.canvas.manager.show()
         self.jpeg_window.update_display(processed)
 
+    def on_stride(val):
+      self.stride = int(val)
+
+    def on_index_change(val):
+      new_index = int(val)
+      if new_index != self.current_index:
+        self._navigate_to(new_index)
+
     # Register all event handlers
     self.stride_slider.on_changed(on_stride)
+    self.index_slider.on_changed(on_index_change)
 
     # Display mode handlers removed - only normal mode
     self.btn_save.on_clicked(on_save_jpeg)

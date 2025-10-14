@@ -39,12 +39,12 @@ def benchmark(name: str, func: Callable, *args, warmup_iters: int = 5, bench_ite
   return rate
 
 
-def run_benchmark(
+def run_benchmark(  # noqa: PLR0914
   image_path: Path,
   pattern: BayerPattern,
   warmup_iters: int = 5,
   bench_iters: int = 50,
-  jpeg_quality: int = 90,
+  jpeg_quality: int = 94,
 ):
   torch.set_grad_enabled(False)
 
@@ -63,10 +63,10 @@ def run_benchmark(
   print(f'Pattern: {pattern.name}')
   print()
 
-  ppg = td.create_ppg(bayer_input.device, (width, height), pattern)
-  rcd = td.create_rcd(bayer_input.device, (width, height), pattern)
-  color_smooth = td.create_postprocess(bayer_input.device, (width, height), pattern, color_smoothing_passes=3)
-  green_eq = td.create_postprocess(
+  ppg = td.PPG(bayer_input.device, (width, height), pattern)
+  rcd = td.RCD(bayer_input.device, (width, height), pattern)
+  color_smooth = td.PostProcess(bayer_input.device, (width, height), pattern, color_smoothing_passes=3)
+  green_eq = td.PostProcess(
     bayer_input.device,
     (width, height),
     pattern,
@@ -74,13 +74,13 @@ def run_benchmark(
     green_eq_global=True,
   )
 
-  laplacian = td.create_laplacian(bayer_input.device, (width, height), params=LaplacianParams())
+  laplacian = td.Laplacian(bayer_input.device, (width, height), LaplacianParams())
 
-  bilateral_2x2 = td.create_bilateral(bayer_input.device, (width, height), sigma_s=2.0, sigma_r=0.2)
-  bilateral_8x1 = td.create_bilateral(bayer_input.device, (width, height), sigma_s=8.0, sigma_r=0.1)
+  bilateral_2x2 = td.Bilateral(bayer_input.device, (width, height), sigma_s=2.0, sigma_r=0.2)
+  bilateral_8x1 = td.Bilateral(bayer_input.device, (width, height), sigma_s=8.0, sigma_r=0.1)
 
-  wiener32x2 = td.create_wiener(bayer_input.device, (width, height), overlap=2, tile_size=32)
-  wiener32x4 = td.create_wiener(bayer_input.device, (width, height), overlap=4, tile_size=32)
+  wiener32x2 = td.Wiener(bayer_input.device, (width, height), overlap_factor=2, tile_size=32)
+  wiener32x4 = td.Wiener(bayer_input.device, (width, height), overlap_factor=4, tile_size=32)
 
   print('=== Denoise Benchmarks ===')
 
@@ -236,7 +236,7 @@ def main():
     '--jpeg-quality',
     type=int,
     default=90,
-    help='JPEG quality for encoding benchmarks (default: 90)',
+    help='JPEG quality for encoding benchmarks (default: 94)',
   )
 
   args = parser.parse_args()

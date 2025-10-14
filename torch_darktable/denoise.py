@@ -78,6 +78,12 @@ class Wiener:
     """
     # Determine channels from input image
     assert image.dim() == 3, f'image must have 3 dimensions, got {image.shape}'
+
+    # Check workspace size match
+    expected_shape = (self._wiener.height, self._wiener.width, image.size(2))
+    if image.shape != expected_shape:
+      raise RuntimeError(f'Wiener input shape {image.shape} != expected {expected_shape}')
+
     channels = image.size(2)
     if channels not in {1, 3}:
       raise ValueError(f'image channels must be 1 or 3, got {channels}')

@@ -5,19 +5,8 @@ import cv2
 import numpy as np
 import torch
 
-from torch_darktable import LaplacianParams, compute_luminance, create_laplacian, local_laplacian_rgb
-
-
-def create_laplacian_algorithm(device, height, width, args):
-  """Create Laplacian algorithm from args object."""
-  params = LaplacianParams(
-    num_gamma=args.num_gamma,
-    sigma=args.sigma,
-    shadows=args.shadows,
-    highlights=args.highlights,
-    clarity=args.clarity,
-  )
-  return create_laplacian(device, (width, height), params=params), params
+import torch_darktable as td
+from torch_darktable import LaplacianParams, compute_luminance
 
 
 def reinhard(image: torch.Tensor, epsilon=1e-4, base_key=0.18, gamma=0.75) -> torch.Tensor:
@@ -59,7 +48,14 @@ def test_laplacian(image_path: Path, args):
 
   # Create Laplacian algorithm from args
   print('Creating Laplacian algorithm...')
-  workspace, params = create_laplacian_algorithm(input_rgb.device, height, width, args)
+  params = LaplacianParams(
+    num_gamma=args.num_gamma,
+    sigma=args.sigma,
+    shadows=args.shadows,
+    highlights=args.highlights,
+    clarity=args.clarity,
+  )
+  workspace = td.Laplacian(input_rgb.device, (width, height), params)
 
   print(
     f'Parameters: gamma={params.num_gamma}, sigma={params.sigma},'
@@ -67,7 +63,7 @@ def test_laplacian(image_path: Path, args):
   )
 
   print('Applying local Laplacian filter to RGB image...')
-  result_rgb = local_laplacian_rgb(workspace, input_rgb)
+  result_rgb = workspace.process_rgb(input_rgb)
 
   if args.tonemap:
     input_rgb = reinhard(input_rgb)

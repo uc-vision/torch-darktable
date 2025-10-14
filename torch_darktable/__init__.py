@@ -19,10 +19,11 @@ from .color_conversion import (
   xyz_to_rgb,
 )
 from .debayer import (
+  PPG,
+  RCD,
+  Bilinear5x5,
+  PostProcess,
   bilinear5x5_demosaic,
-  create_postprocess,
-  create_ppg,
-  create_rcd,
   decode12,
   decode12_float,
   decode12_half,
@@ -31,14 +32,12 @@ from .debayer import (
   encode12_float,
   encode12_u16,
 )
-from .denoise import Wiener, create_wiener, estimate_channel_noise
+from .denoise import Wiener, estimate_channel_noise
 from .jpeg import InputFormat, Jpeg, JpegException, Subsampling
 from .local_contrast import (
+  Bilateral,
+  Laplacian,
   LaplacianParams,
-  bilateral_rgb,
-  create_bilateral,
-  create_laplacian,
-  local_laplacian_rgb,
 )
 from .tonemap import (
   TonemapParameters,
@@ -54,19 +53,24 @@ from .tonemap import (
 from .white_balance import apply_white_balance, estimate_white_balance
 
 __all__ = [
+  'PPG',
+  'RCD',
   'BayerPattern',
+  'Bilateral',
+  'Bilinear5x5',
   'InputFormat',
   'Jpeg',
   'JpegException',
+  'Laplacian',
   'LaplacianParams',
   'PackedFormat',
+  'PostProcess',
   'Subsampling',
   'TonemapParameters',
   'Wiener',
   'aces_tonemap',
   'apply_white_balance',
   'bayer',
-  'bilateral_rgb',
   'bilinear5x5_demosaic',
   'color_conversion',
   'color_transform_3x3',
@@ -74,12 +78,6 @@ __all__ = [
   'compute_image_metrics',
   'compute_log_luminance',
   'compute_luminance',
-  'create_bilateral',
-  'create_laplacian',
-  'create_postprocess',
-  'create_ppg',
-  'create_rcd',
-  'create_wiener',
   'debayer',
   'decode12',
   'decode12_float',
@@ -98,7 +96,6 @@ __all__ = [
   'linear_tonemap',
   'load_as_bayer',
   'local_contrast',
-  'local_laplacian_rgb',
   'metrics_from_dict',
   'metrics_to_dict',
   'modify_hsl',

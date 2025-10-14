@@ -48,7 +48,7 @@ def test_jpeg_encode(image_path: Path, quality: int, progressive: bool, input_fo
 def main():
   parser = argparse.ArgumentParser(description='Test JPEG encoding')
   parser.add_argument('image', type=Path, help='Input image path')
-  parser.add_argument('--quality', type=int, default=90, help='JPEG quality (1-100, default: 90)')
+  parser.add_argument('--quality', type=int, default=94, help='JPEG quality (1-100, default: 94)')
   parser.add_argument('--progressive', action='store_true', help='Use progressive JPEG')
   parser.add_argument(
     '--format',
@@ -60,7 +60,7 @@ def main():
 
   args = parser.parse_args()
 
-  input_format = getattr(InputFormat, args.format)
+  input_format = InputFormat[args.format]
   test_jpeg_encode(args.image, args.quality, args.progressive, input_format)
 
 

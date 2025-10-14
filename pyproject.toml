@@ -23,6 +23,6 @@ test-wiener = "torch_darktable.scripts.test_wiener:main"
 test-denoise = "torch_darktable.scripts.test_wiener:main"
 test-jpeg = "torch_darktable.scripts.test_jpeg:main"
 run-benchmark = "torch_darktable.scripts.run_benchmark:main"
-process-raw = "torch_darktable.scripts.process_raw.main:main"
+view-raw = "torch_darktable.scripts.view_raw.main:main"
 
 

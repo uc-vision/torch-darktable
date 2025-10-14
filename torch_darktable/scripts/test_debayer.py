@@ -5,23 +5,11 @@ import sys
 import cv2
 import numpy as np
 
-from torch_darktable import BayerPattern, create_postprocess, create_ppg, create_rcd
+import torch_darktable as td
+from torch_darktable import BayerPattern
 from torch_darktable.bayer import rgb_to_bayer
 from torch_darktable.debayer import create_bilinear
 from torch_darktable.scripts.util import display_rgb, load_image
-
-
-def create_postprocess_algorithm(device, width, height, pattern, args):
-  """Create post-processing algorithm from args object."""
-  return create_postprocess(
-    device,
-    (width, height),
-    pattern,
-    color_smoothing_passes=args.color_smoothing_passes,
-    green_eq_local=args.green_eq_local,
-    green_eq_global=args.green_eq_global,
-    green_eq_threshold=args.green_eq_threshold,
-  )
 
 
 def test_demosaic(image_path: Path, pattern: BayerPattern, args):
@@ -39,11 +27,11 @@ def test_demosaic(image_path: Path, pattern: BayerPattern, args):
 
   # Create demosaic algorithm
   if args.bilinear:
-    debayer_alg = create_bilinear(pattern)
+    debayer_alg = td.Bilinear5x5(pattern)
   elif args.ppg:
-    debayer_alg = create_ppg(device, (width, height), pattern, median_threshold=args.median_threshold)
+    debayer_alg = td.PPG(device, (width, height), pattern, median_threshold=args.median_threshold)
   else:  # args.rcd
-    debayer_alg = create_rcd(device, (width, height), pattern)
+    debayer_alg = td.RCD(device, (width, height), pattern)
 
   print(debayer_alg)
   result = debayer_alg.process(bayer_input)
@@ -55,7 +43,15 @@ def test_demosaic(image_path: Path, pattern: BayerPattern, args):
       f'green_eq_local={args.green_eq_local}, green_eq_global={args.green_eq_global}'
     )
 
-    postprocess_alg = create_postprocess_algorithm(device, width, height, pattern, args)
+    postprocess_alg = td.PostProcess(
+      device,
+      (width, height),
+      pattern,
+      color_smoothing_passes=args.color_smoothing_passes,
+      green_eq_local=args.green_eq_local,
+      green_eq_global=args.green_eq_global,
+      green_eq_threshold=args.green_eq_threshold,
+    )
     result = postprocess_alg.process(result)
 
   rgb = result[:, :, :3].clamp(0, 1)

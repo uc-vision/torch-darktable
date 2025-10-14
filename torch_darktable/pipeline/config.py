@@ -62,8 +62,7 @@ class ImageProcessingSettings:
   # Vibrance adjustment
   vibrance: float = float_field(0.0, range=(-1.0, 1.0), description='Vibrance')
 
-  # Temporal averaging to smooth intensity scaling over time
-  enable_temporal_average: bool = bool_field(True, description='Enable temporal averaging')
+  # Temporal averaging to smooth intensity scaling over time (set to 1 to disable)
   moving_average: float = float_field(0.02, range=(0.0, 1.0), description='Tonemap moving average')
 
   debayer: Debayer = enum_field(Debayer.rcd, description='Debayer algorithm')

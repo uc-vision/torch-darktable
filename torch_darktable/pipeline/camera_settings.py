@@ -1,15 +1,16 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
+import warnings
 
 from beartype import beartype
-import cv2
-import numpy as np
 import torch
 
 import torch_darktable as td
 from torch_darktable.pipeline.config import ImageProcessingSettings
 from torch_darktable.pipeline.presets import presets
 from torch_darktable.pipeline.transform import ImageTransform
+
+warnings.filterwarnings('ignore', category=UserWarning, message='The given buffer is not writable')
 
 
 @beartype
@@ -31,8 +32,6 @@ class CameraSettings:
       return self.transform.get(camera_name, ImageTransform.none)
     return self.transform
 
-
-
   @property
   def bytes(self) -> int:
     return ((self.image_size[0] * self.image_size[1] * 3) // 2) + self.padding
@@ -43,11 +42,15 @@ def load_raw_bytes(filepath: Path, device: torch.device = torch.device('cuda:0')
   """Load raw image bytes into torch tensor without any decoding"""
   with filepath.open('rb') as f:
     raw_bytes = f.read()
+
+  # disable user warning about writable buffer
   return torch.frombuffer(raw_bytes, dtype=torch.uint8).to(device, non_blocking=True)
 
 
 @beartype
-def load_raw_bytes_stripped(filepath: Path, camera_settings: CameraSettings, device: torch.device = torch.device('cuda:0')):
+def load_raw_bytes_stripped(
+  filepath: Path, camera_settings: CameraSettings, device: torch.device = torch.device('cuda:0')
+):
   """Load raw image bytes and strip padding, but don't decode"""
   raw_bytes = load_raw_bytes(filepath, device)
   if camera_settings.padding > 0:
@@ -72,7 +75,9 @@ def load_raw_bayer(
   return decoded.view(-1, width)
 
 
-beetroot_transforms = {f"cam{i}": ImageTransform.rotate_270 if i > 6 else ImageTransform.rotate_90 for i in range(1, 13)}
+beetroot_transforms = {
+  f'cam{i}': ImageTransform.rotate_270 if i > 6 else ImageTransform.rotate_90 for i in range(1, 13)
+}
 
 camera_settings = dict(
   artichoke=CameraSettings(
@@ -82,7 +87,6 @@ camera_settings = dict(
     preset=presets['adaptive_aces'],
     transform=ImageTransform.rotate_270,
   ),
-
   carrot=CameraSettings(
     name='carrot',
     image_size=(2472, 2062),
@@ -91,7 +95,6 @@ camera_settings = dict(
     transform=ImageTransform.rotate_270,
     white_balance=(1.8, 1.0, 2.1),
   ),
-
   beetroot=CameraSettings(
     name='beetroot',
     image_size=(2472, 2062),
@@ -100,12 +103,11 @@ camera_settings = dict(
     transform=beetroot_transforms,
     white_balance=(1.8, 1.0, 2.1),
   ),
-
   pfr=CameraSettings(
     name='pfr',
     image_size=(4112, 3008),
     padding=1536,
-    preset=presets['adaptive_aces'],
+    preset=replace(presets['aces'], vibrance=0.0),
     packed_format=td.PackedFormat.Packed12,
     transform=ImageTransform.rotate_270,
   ),
@@ -121,3 +123,15 @@ def settings_for_file(file_path: Path) -> CameraSettings:
       return camera_settings[name]
 
   raise ValueError(f'Could not match size of {file_path} with known camera settings {camera_sizes}')
+
+
+@beartype
+def validate_camera_names(settings: CameraSettings, camera_names: list[str]) -> None:
+  """Validate that camera names match what camera settings expects."""
+  if isinstance(settings.transform, dict):
+    expected_cameras = set(settings.transform.keys())
+    actual_cameras = set(camera_names)
+    if expected_cameras != actual_cameras:
+      raise ValueError(
+        f'Camera names mismatch: settings expects {sorted(expected_cameras)}, got {sorted(actual_cameras)}'
+      )

@@ -23,7 +23,7 @@ adaptive_aces = ImageProcessingSettings(
   tone_intensity=2.0,
   light_adapt=0.8,
   tone_mapping=ToneMapper.adaptive_aces,
-  vibrance=0.5
+  vibrance=0.5,
 )
 
 
@@ -34,7 +34,7 @@ aces = ImageProcessingSettings(
   tone_gamma=2.2,
   tone_intensity=1.0,
   tone_mapping=ToneMapper.aces,
-  vibrance=0.5
+  vibrance=0.5,
 )
 
 reinhard = ImageProcessingSettings(
@@ -45,7 +45,7 @@ reinhard = ImageProcessingSettings(
   tone_intensity=2.5,
   light_adapt=0.8,
   tone_mapping=ToneMapper.reinhard,
-  vibrance=0.5
+  vibrance=0.5,
 )
 
 presets: dict[str, ImageProcessingSettings] = {

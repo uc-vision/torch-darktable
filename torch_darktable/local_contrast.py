@@ -20,102 +20,125 @@ class LaplacianParams:
   clarity: float = 0.0
 
 
-@beartype
-def create_laplacian(
-  device: torch.device, image_size: tuple[int, int], params: LaplacianParams
-) -> 'extension.Laplacian':
-  """
-  Create a local Laplacian filter object.
+class Laplacian:
+  """Laplacian with shape validation."""
 
-  Args:
-      device: CUDA device to use
-      image_size: (width, height) of the image
-      params: Laplacian filter parameters
+  @beartype
+  def __init__(self, device: torch.device, image_size: tuple[int, int], params: LaplacianParams):
+    """Create a local Laplacian filter object.
 
-  Returns:
-      Laplacian algorithm object
-  """
-  width, height = image_size
-  # Map params to implementation defaults conservatively
-  return extension.Laplacian(
-    device,
-    width,
-    height,
-    params.num_gamma,
-    params.sigma,
-    params.shadows,
-    params.highlights,
-    params.clarity,
-  )
+    Args:
+        device: CUDA device to use
+        image_size: (width, height) of the image
+        params: Laplacian filter parameters
+    """
+    width, height = image_size
+    self._laplacian = extension.Laplacian(
+      device,
+      width,
+      height,
+      params.num_gamma,
+      params.sigma,
+      params.shadows,
+      params.highlights,
+      params.clarity,
+    )
 
+  def process(self, input_tensor: torch.Tensor) -> torch.Tensor:
+    expected_shape = (self._laplacian.height, self._laplacian.width)
+    if input_tensor.shape != expected_shape:
+      raise RuntimeError(f'Laplacian input shape {input_tensor.shape} != expected {expected_shape}')
+    return self._laplacian.process(input_tensor)
 
-@beartype
-def local_laplacian_rgb(
-  laplacian: 'extension.Laplacian',
-  input_image: torch.Tensor,
-) -> torch.Tensor:
-  """
-  Apply local Laplacian filtering to RGB image.
+  @beartype
+  def process_rgb(self, input_image: torch.Tensor) -> torch.Tensor:
+    """Apply local Laplacian filtering to RGB image."""
+    luminance = extension.compute_luminance(input_image)
+    return extension.modify_luminance(input_image, self.process(luminance))
 
-  Args:
-      laplacian: Laplacian algorithm object
-      input_image: Input RGB image tensor
+  @property
+  def image_size(self) -> tuple[int, int]:
+    return (self._laplacian.width, self._laplacian.height)
 
-  Returns:
-      Filtered RGB image tensor
-  """
-  luminance = extension.compute_luminance(input_image)
-  return extension.modify_luminance(input_image, laplacian.process(luminance))
+  @property
+  def sigma(self) -> float:
+    return self._laplacian.sigma
 
+  @property
+  def shadows(self) -> float:
+    return self._laplacian.shadows
 
-@beartype
-def create_bilateral(
-  device: torch.device,
-  image_size: tuple[int, int],
-  *,
-  sigma_s: float,
-  sigma_r: float,
-) -> 'extension.Bilateral':
-  """
-  Create a bilateral filter object.
+  @property
+  def highlights(self) -> float:
+    return self._laplacian.highlights
 
-  Args:
-      device: CUDA device to use
-      image_size: (width, height) of the image
-      sigma_s: Spatial standard deviation
-      sigma_r: Luminance range standard deviation (determines subdivisions)
-
-  Returns:
-      Bilateral algorithm object
-  """
-  width, height = image_size
-
-  return extension.Bilateral(device, width, height, sigma_s, sigma_r)
+  @property
+  def clarity(self) -> float:
+    return self._laplacian.clarity
 
 
-@beartype
-def bilateral_rgb(bilateral: 'extension.Bilateral', input_image: torch.Tensor, detail: float) -> torch.Tensor:
-  assert input_image.dim() == 3, f'image must have 3 dimensions, got {input_image.shape}'
+class Bilateral:
+  """Bilateral with shape validation."""
 
-  luminance = extension.compute_luminance(input_image)
-  return extension.modify_luminance(input_image, bilateral.process(luminance, float(detail)))
+  @beartype
+  def __init__(
+    self,
+    device: torch.device,
+    image_size: tuple[int, int],
+    *,
+    sigma_s: float,
+    sigma_r: float,
+  ):
+    """Create a bilateral filter object.
 
+    Args:
+        device: CUDA device to use
+        image_size: (width, height) of the image
+        sigma_s: Spatial standard deviation
+        sigma_r: Luminance range standard deviation
+    """
+    width, height = image_size
+    self._bilateral = extension.Bilateral(device, width, height, sigma_s, sigma_r)
 
-@beartype
-def log_bilateral_rgb(
-  bilateral: 'extension.Bilateral',
-  input_image: torch.Tensor,
-  detail: float,
-  eps: float = 1e-6,
-) -> torch.Tensor:
-  log_luminance = extension.compute_log_luminance(input_image, eps)
-  return extension.modify_log_luminance(input_image, bilateral.process(log_luminance, float(detail)), eps)
+  def process(self, luminance: torch.Tensor, detail: float) -> torch.Tensor:
+    expected_shape = (self._bilateral.height, self._bilateral.width)
+    if luminance.shape != expected_shape:
+      raise RuntimeError(f'Bilateral input shape {luminance.shape} != expected {expected_shape}')
+    return self._bilateral.process(luminance, detail)
+
+  @beartype
+  def process_rgb(self, input_image: torch.Tensor, detail: float) -> torch.Tensor:
+    """Apply bilateral filtering to RGB image."""
+    assert input_image.dim() == 3, f'image must have 3 dimensions, got {input_image.shape}'
+    luminance = extension.compute_luminance(input_image)
+    return extension.modify_luminance(input_image, self.process(luminance, float(detail)))
+
+  @beartype
+  def process_log_rgb(
+    self,
+    input_image: torch.Tensor,
+    detail: float,
+    eps: float = 1e-6,
+  ) -> torch.Tensor:
+    """Apply bilateral filtering to RGB image in log space."""
+    log_luminance = extension.compute_log_luminance(input_image, eps)
+    return extension.modify_log_luminance(input_image, self.process(log_luminance, float(detail)), eps)
+
+  @property
+  def image_size(self) -> tuple[int, int]:
+    return (self._bilateral.width, self._bilateral.height)
+
+  @property
+  def sigma_s(self) -> float:
+    return self._bilateral.sigma_s
+
+  @property
+  def sigma_r(self) -> float:
+    return self._bilateral.sigma_r
 
 
 __all__ = [
+  'Bilateral',
+  'Laplacian',
   'LaplacianParams',
-  'bilateral_rgb',
-  'create_bilateral',
-  'create_laplacian',
-  'local_laplacian_rgb',
 ]

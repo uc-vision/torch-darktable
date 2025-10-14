@@ -5,7 +5,7 @@ import cv2
 import numpy as np
 import torch
 
-from torch_darktable import bilateral_rgb, create_bilateral
+import torch_darktable as td
 
 
 def reinhard(image: torch.Tensor, epsilon=1e-4, base_key=0.18, gamma=0.75) -> torch.Tensor:
@@ -33,10 +33,10 @@ def test_bilateral(image_path: Path, args):
   print(f'Image size: {width}x{height}x{channels}')
 
   print('Creating Bilateral algorithm...')
-  workspace = create_bilateral(input_rgb.device, (width, height), sigma_s=args.sigma_s, sigma_r=args.sigma_r)
+  workspace = td.Bilateral(input_rgb.device, (width, height), sigma_s=args.sigma_s, sigma_r=args.sigma_r)
 
   print(f'Parameters: sigma_s={args.sigma_s}, sigma_r={args.sigma_r}')
-  result_rgb = bilateral_rgb(workspace, input_rgb, detail=args.detail)
+  result_rgb = workspace.process_rgb(input_rgb, detail=args.detail)
 
   if args.tonemap:
     input_rgb = reinhard(input_rgb)

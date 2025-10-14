@@ -35,7 +35,7 @@ def test_denoise(image_path: Path, args):
 
   # Keep in HWC format (no conversion needed)
   print('Creating Wiener denoiser...')
-  wiener = td.create_wiener(input_rgb.device, (width, height), overlap=args.overlap)
+  wiener = td.Wiener(input_rgb.device, (width, height), overlap_factor=args.overlap)
 
   print('Processing...')
   with torch.no_grad():

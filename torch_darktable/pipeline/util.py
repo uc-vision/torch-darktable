@@ -5,11 +5,6 @@ def lerp(a: torch.Tensor, b: torch.Tensor, t: float) -> torch.Tensor:
   return a + (b - a) * t
 
 
-def lerp_none(a: torch.Tensor | None, b: torch.Tensor, t: float) -> torch.Tensor:
-  if a is None:
-    return b
-  return lerp(a, b, t)
-
 
 @torch.compile
 def normalize_image(rgb_raw: torch.Tensor, bounds: torch.Tensor) -> torch.Tensor:

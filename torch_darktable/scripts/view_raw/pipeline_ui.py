@@ -13,7 +13,7 @@ from torch_darktable.pipeline.config import Debayer, ImageProcessingSettings, To
 from torch_darktable.pipeline.image_processor import ImageProcessor
 from torch_darktable.pipeline.presets import presets
 from torch_darktable.pipeline.transform import ImageTransform, transform
-from torch_darktable.scripts.process_raw.ui_builder import (
+from torch_darktable.scripts.view_raw.ui_builder import (
   UILayoutManager,
   create_checkboxes,
   create_radio_buttons,
@@ -54,21 +54,23 @@ class PipelineController:
       self.settings,
       self.device,
       self.camera_settings.white_balance,
+      transforms=self.image_transform,
     )
 
   def _update_base_pipeline(self):
     """Update the base pipeline with current settings."""
     self.image_processor.update_settings(self.settings)
 
-
   @beartype
   def process_image(self, bayer_image: torch.Tensor) -> torch.Tensor:
     """Process a bayer image through the pipeline."""
     rgb_raw = self.image_processor.debayer(bayer_image)
     bounds = td.compute_image_bounds([rgb_raw], stride=4)
-
     rgb_raw = self.image_processor.process_rgb(rgb_raw, bounds)
-    tonemapped = self.image_processor.tonemap(rgb_raw)
+
+    metrics = td.compute_image_metrics([rgb_raw], stride=8)
+    tonemapped = self.image_processor.tonemap(rgb_raw, metrics)
+
     return transform(tonemapped, self.image_transform)
 
   def update_display_callback(self):
@@ -110,6 +112,7 @@ class PipelineController:
   def rotate_transform(self):
     """Rotate the transform to the next rotation."""
     self.image_transform = self.image_transform.next_rotation()
+    self.image_processor.transforms = self.image_transform
 
   def create_param_handler(self, getter, setter):
     """Create a parameter handler for sliders."""

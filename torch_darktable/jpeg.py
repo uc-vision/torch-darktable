@@ -24,7 +24,9 @@ class Jpeg:
   def __init__(self):
     self.jpeg = extension.Jpeg()
 
-  def encode(self, image, quality=90, input_format=InputFormat.BGRI, subsampling=Subsampling.CSS_422, progressive=False):
+  def encode(
+    self, image, quality=94, input_format=InputFormat.RGBI, subsampling=Subsampling.CSS_422, progressive=False
+  ):
     return self.jpeg.encode(image, quality, int(input_format), int(subsampling), progressive)
 
 

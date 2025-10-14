@@ -39,7 +39,9 @@ def interactive_debayer(
   """Interactive raw image processing with navigation."""
   camera_name = image_files[current_index].parent.stem
   image_transform = camera_settings.get_image_transform(camera_name)
-  pipeline_controller = PipelineController(camera_settings=camera_settings, device=device, image_transform=image_transform)
+  pipeline_controller = PipelineController(
+    camera_settings=camera_settings, device=device, image_transform=image_transform
+  )
 
   ui = ProcessRawUI(image_files, current_index, pipeline_controller, output_dir)
   ui.show()

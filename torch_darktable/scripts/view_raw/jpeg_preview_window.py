@@ -1,6 +1,7 @@
 """JPEG preview popup window for quality/compression experimentation."""
 
 from beartype import beartype
+import cv2
 import matplotlib.pyplot as plt
 from matplotlib.widgets import CheckButtons, Slider
 import numpy as np
@@ -8,7 +9,6 @@ import numpy as np
 
 def _apply_jpeg_filter(rgb_image, quality: int, progressive: bool):
   """Apply JPEG compression and return (image, file_size, psnr)."""
-  import cv2
 
   bgr = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR)
   encode_params = [cv2.IMWRITE_JPEG_QUALITY, quality]

@@ -29,7 +29,7 @@ def encode_decode_jpeg(rgb_array, quality: int = 95, progressive: bool = False):
   return decoded_rgb, len(encoded_img.tobytes())
 
 
-def save_jpeg_to_disk(rgb_array, output_path: Path, quality: int = 95, progressive: bool = False):
+def save_jpeg_to_disk(rgb_array: np.ndarray, output_path: Path, quality: int = 95, progressive: bool = False):
   """Save JPEG to disk."""
   bgr_array = cv2.cvtColor(rgb_array, cv2.COLOR_RGB2BGR)
   params = _get_jpeg_encode_params(quality, progressive)
