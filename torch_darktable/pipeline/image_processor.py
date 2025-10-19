@@ -83,7 +83,8 @@ class ImageProcessor:
       else 'None'
     )
     transform_str = (
-      f'{self.transforms.name}' if isinstance(self.transforms, ImageTransform) 
+      f'{self.transforms.name}'
+      if isinstance(self.transforms, ImageTransform)
       else f'{{{", ".join(f"{k}: {v.name}" for k, v in self.transforms.items())}}}'
     )
     return (

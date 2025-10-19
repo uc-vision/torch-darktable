@@ -72,7 +72,10 @@ def _install_algorithm_repr() -> None:
     )
 
   def _laplacian_repr(self) -> str:
-    return f'Laplacian({self.width}x{self.height}, sigma={self.sigma}, shadows={self.shadows}, highlights={self.highlights}, clarity={self.clarity})'
+    return (
+      f'Laplacian({self.width}x{self.height}, sigma={self.sigma},'
+      f'shadows={self.shadows}, highlights={self.highlights}, clarity={self.clarity})'
+    )
 
   def _bilateral_repr(self) -> str:
     return f'Bilateral({self.width}x{self.height}, sigma_s={self.sigma_s}, sigma_r={self.sigma_r})'

@@ -1,14 +1,12 @@
 """Shared UI building utilities for creating consistent layouts and widgets."""
 
-from dataclasses import replace
-
 import matplotlib.pyplot as plt
 from matplotlib.widgets import CheckButtons, RadioButtons
 
 
-def create_clean_axes(rect, zorder=None, visible_ticks=False, axis_off=False, for_slider=False):
+def create_clean_axes(rect, zorder=None, visible_ticks=False, axis_off=False, for_slider=False, fig=None):
   """Create axes with clean appearance - no ticks or labels by default."""
-  ax = plt.axes(rect)
+  ax = fig.add_axes(rect) if fig is not None else plt.axes(rect)
 
   if not visible_ticks:
     ax.set_xticks([])
@@ -207,21 +205,20 @@ def _position_two_row_radio_buttons(rb, text_widths, button_width, spacing, font
   rb._buttons.set_offsets(button_positions)
 
 
-def create_radio_buttons(rect, options, active_option, orientation='horizontal'):
+def create_radio_buttons(axes, options, active_option, orientation='horizontal'):
   """Create radio buttons with given options and active selection."""
-  ax = plt.axes(rect)
-  ax.set_xticks([])
-  ax.set_yticks([])
+  axes.set_xticks([])
+  axes.set_yticks([])
 
   try:
     active_index = options.index(active_option)
   except ValueError:
     active_index = 0
 
-  rb = RadioButtons(ax, options, active=active_index)
+  rb = RadioButtons(axes, options, active=active_index)
 
   if orientation == 'horizontal':
-    text_widths, button_width, spacing = _measure_ui_dimensions(ax, options)
+    text_widths, button_width, spacing = _measure_ui_dimensions(axes, options)
     result = _calculate_layout_params(text_widths, button_width, spacing)
     font_size, scaled_widths, start_offset, button_width, spacing, use_two_rows = result
 
@@ -233,12 +230,13 @@ def create_radio_buttons(rect, options, active_option, orientation='horizontal')
   return rb
 
 
-def create_checkboxes(rect, labels, values, orientation='horizontal'):
+def create_checkboxes(axes, labels, values, orientation='horizontal'):
   """Create checkboxes with given labels and values, defaulting to horizontal layout."""
   if orientation == 'horizontal':
-    # Create individual checkboxes in separate sub-areas of the rect
+    # Create individual checkboxes in separate sub-areas of the axes
     checkboxes = []
-    x, y, w, h = rect
+    pos = axes.get_position()
+    x, y, w, h = pos.x0, pos.y0, pos.width, pos.height
     individual_width = w / len(labels)
 
     for i, (label, value) in enumerate(zip(labels, values, strict=True)):
@@ -246,22 +244,15 @@ def create_checkboxes(rect, labels, values, orientation='horizontal'):
       cb_x = x + i * individual_width
       cb_rect = (cb_x, y, individual_width, h)
 
-      ax = plt.axes(cb_rect)
-      ax.set_xticks([])
-      ax.set_yticks([])
-      ax.set_zorder(10)
+      ax = create_clean_axes(cb_rect, zorder=10, fig=axes.figure)
 
       cb = CheckButtons(ax, [label], [value])
       checkboxes.append(cb)
 
     return checkboxes
-  # Vertical - use single axes with multiple labels
-  ax = plt.axes(rect)
-  ax.set_xticks([])
-  ax.set_yticks([])
-  ax.set_zorder(10)
+  # Vertical - use the provided axes directly
 
-  return [CheckButtons(ax, labels, values)]
+  return [CheckButtons(axes, labels, values)]
 
 
 class UILayoutManager:
@@ -289,11 +280,7 @@ class UILayoutManager:
     for label, value in zip(labels, values, strict=True):
       # Reserve space for labels - checkboxes start further right
       checkbox_rect = self.add_component(height)
-      cb = CheckButtons(plt.axes(checkbox_rect), [label], [value])
-
-      # Create axes with clean appearance
-      cb.ax.set_xticks([])
-      cb.ax.set_yticks([])
+      cb = CheckButtons(create_clean_axes(checkbox_rect), [label], [value])
       checkboxes.append(cb)
 
     return checkboxes

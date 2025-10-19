@@ -191,11 +191,11 @@ def bilinear5x5_demosaic(image: torch.Tensor, bayer_pattern: BayerPattern) -> to
 
 
 __all__ = [
+  'PPG',
+  'RCD',
   'BayerPattern',
   'Bilinear5x5',
   'PackedFormat',
-  'PPG',
-  'RCD',
   'PostProcess',
   'bilinear5x5_demosaic',
   'decode12',

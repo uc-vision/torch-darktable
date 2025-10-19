@@ -78,15 +78,18 @@ def create_selective_histograms(ax, bayer_image, camera_settings, channel_states
 
   # Calculate saturation percentages (values >= 0.99)
   saturation_threshold = 0.99
-  r_saturated = np.sum(r_channel >= saturation_threshold) / len(r_channel) * 100
-  g_saturated = np.sum(g_channel >= saturation_threshold) / len(g_channel) * 100
-  b_saturated = np.sum(b_channel >= saturation_threshold) / len(b_channel) * 100
+
+  def saturated(channel):
+    saturated = np.sum(channel >= saturation_threshold) / len(channel) * 100
+    filtered = channel[channel < saturation_threshold]
+
+    return saturated, filtered
+
+  r_saturated, r_filtered = saturated(r_channel)
+  g_saturated, g_filtered = saturated(g_channel)
+  b_saturated, b_filtered = saturated(b_channel)
 
   # Filter out saturated pixels for histogram display (exclude 1.0 level)
-  r_filtered = r_channel[r_channel < saturation_threshold]
-  g_filtered = g_channel[g_channel < saturation_threshold]
-  b_filtered = b_channel[b_channel < saturation_threshold]
-
   # Create histograms only for enabled channels, excluding saturated pixels
   histogram_range = (0, 0.99)  # Exclude 1.0 level
 
@@ -131,7 +134,7 @@ def setup_histogram_controls_with_data(fig, histogram_ax, histogram_data, draw_c
   """
   # Create checkboxes for RGB channel toggles overlaid on the histogram chart
   # Position in top-right corner of the histogram display area
-  checkbox_rect = [0.75, 0.85, 0.20, 0.12]  # x, y, width, height - make wider and more visible
+  checkbox_rect = (0.75, 0.85, 0.20, 0.12)  # x, y, width, height - make wider and more visible
   # Use plt.axes() for proper widget creation (not fig.add_axes)
   ax_checkboxes = plt.axes(checkbox_rect)
   ax_checkboxes.set_xticks([])

@@ -40,7 +40,10 @@ class Wiener:
     self._device = device
 
   def __repr__(self):
-    return f'Wiener({self._wiener.width}x{self._wiener.height}, overlap_factor={self.overlap_factor}, tile_size={self._tile_size})'
+    return (
+      f'Wiener({self._wiener.width}x{self._wiener.height},'
+      f'overlap_factor={self.overlap_factor}, tile_size={self._tile_size})'
+    )
 
   def process_luminance(self, image: torch.Tensor, noise: float | torch.Tensor) -> torch.Tensor:
     # Process luminance channel only (single channel processing)
@@ -128,9 +131,6 @@ def create_wiener(
 def estimate_channel_noise(image: torch.Tensor, stride: int = 8) -> torch.Tensor:
   """
   Estimate per-channel noise levels from image using high-frequency analysis.
-
-  Based on paper's MAD approach: σ ≈ median(|H - median(H)|) / 0.6745
-
   Args:
       image: RGB image tensor of shape (H, W, 3)
       stride: Subsampling stride for faster computation (default: 8)

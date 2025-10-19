@@ -4,6 +4,7 @@ from dataclasses import fields, replace
 from pathlib import Path
 
 from beartype import beartype
+from matplotlib import pyplot as plt
 from matplotlib.widgets import Slider
 import torch
 
@@ -130,28 +131,31 @@ class PipelineController:
 
     return handler
 
-  def create_pipeline_ui(self, layout_manager: UILayoutManager):
+  def create_pipeline_ui(self, layout_manager: UILayoutManager):  # noqa: PLR0914
     """Create all pipeline-related UI components using the layout manager."""
 
     # Preset radio buttons
     preset_rect = layout_manager.add_component(0.08)
     available_presets = list(presets.keys())
+    preset_axes = plt.axes(preset_rect)
     self.rb_presets = create_radio_buttons(
-      preset_rect, available_presets, self.current_preset, orientation='horizontal'
+      preset_axes, available_presets, self.current_preset, orientation='horizontal'
     )
 
     # Debayer method radio buttons
     debayer_rect = layout_manager.add_component(0.08)
     debayer_options = ('bilinear', 'rcd', 'ppg')
+    debayer_axes = plt.axes(debayer_rect)
     self.rb_debayer = create_radio_buttons(
-      debayer_rect, debayer_options, self.settings.debayer.name, orientation='horizontal'
+      debayer_axes, debayer_options, self.settings.debayer.name, orientation='horizontal'
     )
 
     # Tonemap method radio buttons
     tonemap_rect = layout_manager.add_component(0.08)
     tonemap_options = ('reinhard', 'aces', 'adaptive_aces', 'linear')
+    tonemap_axes = plt.axes(tonemap_rect)
     self.rb_tonemap = create_radio_buttons(
-      tonemap_rect, tonemap_options, self.settings.tone_mapping.name, orientation='horizontal'
+      tonemap_axes, tonemap_options, self.settings.tone_mapping.name, orientation='horizontal'
     )
 
     # Checkboxes
@@ -164,7 +168,8 @@ class PipelineController:
 
     # Create checkboxes horizontally using consistent helper
     checkbox_rect = layout_manager.add_component(0.06)
-    self.checkboxes = create_checkboxes(checkbox_rect, checkbox_labels, checkbox_values)
+    checkbox_axes = plt.axes(checkbox_rect)
+    self.checkboxes = create_checkboxes(checkbox_axes, checkbox_labels, checkbox_values)
     self.checkbox_labels = checkbox_labels
 
     # Get field metadata for ranges

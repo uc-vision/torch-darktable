@@ -20,13 +20,16 @@ class HistogramWindow:
 
     # Create the figure and window
     self.fig = plt.figure(figsize=(8, 6), facecolor='white')
-    self.fig.canvas.manager.set_window_title('Levels')  # type: ignore
+
+    manager = self.fig.canvas.manager
+    assert manager is not None
+    manager.set_window_title('Levels')
 
     # Main histogram axes - full area
-    self.hist_ax = self.fig.add_axes([0.1, 0.1, 0.85, 0.8])  # type: ignore
+    self.hist_ax = self.fig.add_axes((0.1, 0.1, 0.85, 0.8))
 
     # Channel controls overlaid on right side, positioned lower to avoid legend
-    self.checkbox_ax = self.fig.add_axes([0.72, 0.55, 0.2, 0.15])  # type: ignore
+    self.checkbox_ax = self.fig.add_axes((0.72, 0.55, 0.2, 0.15))
     self.checkbox_ax.set_xticks([])
     self.checkbox_ax.set_yticks([])
     self.checkbox_ax.patch.set_facecolor('white')
@@ -76,7 +79,7 @@ class HistogramWindow:
       self.hist_ax.set_ylim(ylim)
 
     # Refresh display
-    self.fig.canvas.draw()  # type: ignore
+    self.fig.canvas.draw()
 
   def _create_rgb_histograms(self, ax, rgb_image, bins=256):
     """Create histograms for processed RGB image data."""
@@ -109,13 +112,12 @@ class HistogramWindow:
 
   def show(self):
     """Show the histogram window."""
-    self.fig.show()  # type: ignore
+    self.fig.show()
 
   def close(self):
     """Close the histogram window."""
     if self.fig is not None:
       plt.close(self.fig)
-      self.fig = None
 
   def is_open(self):
     """Check if the histogram window is open."""

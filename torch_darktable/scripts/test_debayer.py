@@ -8,7 +8,6 @@ import numpy as np
 import torch_darktable as td
 from torch_darktable import BayerPattern
 from torch_darktable.bayer import rgb_to_bayer
-from torch_darktable.debayer import create_bilinear
 from torch_darktable.scripts.util import display_rgb, load_image
 
 
