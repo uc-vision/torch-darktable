@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "torch_darktable"
-version = "0.1.1"
+version = "0.1.5"
 description = "CUDA ISP algorithms extracted from darktable for PyTorch"
 authors = [{name = "Oliver Batchelor"}]
 requires-python = ">=3.10"
@@ -25,4 +25,6 @@ test-jpeg = "torch_darktable.scripts.test_jpeg:main"
 run-benchmark = "torch_darktable.scripts.run_benchmark:main"
 view-raw = "torch_darktable.scripts.view_raw.main:main"
 
+[tool.setuptools.packages.find]
+include = ["torch_darktable*"]
 

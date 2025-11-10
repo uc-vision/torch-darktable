@@ -1,0 +1,5 @@
+recursive-include torch_darktable/csrc *.h *.cpp *.cu
+recursive-include torch_darktable *.pyi
+
+
+
