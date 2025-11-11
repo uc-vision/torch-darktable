@@ -11,6 +11,22 @@ from .config import Debayer, ImageProcessingSettings, ToneMapper
 from .util import lerp, normalize_image, resize_longest_edge
 
 
+class ImageSizeMismatchError(Exception):
+  """Raised when image size does not match expected dimensions."""
+
+  def __init__(
+    self,
+    message: str,
+    image_size: tuple[int, int],
+    packed_format: td.PackedFormat,
+    padding: int,
+  ):
+    super().__init__(message)
+    self.image_size = image_size
+    self.packed_format = packed_format
+    self.padding = padding
+
+
 @beartype
 class ImageProcessor:
   @beartype
@@ -102,7 +118,7 @@ class ImageProcessor:
 
   @staticmethod
   def from_camera_settings(camera_settings: CameraSettings, device: torch.device):
-    image_settings = camera_settings.preset
+    image_settings = camera_settings.image_processing
 
     return ImageProcessor(
       camera_settings.image_size,
@@ -162,13 +178,20 @@ class ImageProcessor:
 
     return raw_bytes + self.padding
 
+  def _image_size_mismatch_error(self, message: str) -> ImageSizeMismatchError:
+    return ImageSizeMismatchError(
+      message,
+      image_size=self.image_size,
+      packed_format=self.packed_format,
+      padding=self.padding,
+    )
+
   @beartype
   def load_bytes(self, bytes: torch.Tensor) -> torch.Tensor:
     if bytes.numel() != self.expected_bytes:
-      raise ValueError(
+      raise self._image_size_mismatch_error(
         f'Image size mismatch: expected {self.expected_bytes} bytes for {self.image_size} {self.packed_format.name} '
         f'with {self.padding} padding, got {bytes.numel()} bytes. '
-        f'Check the camera type parameter matches your data.'
       )
 
     if self.padding > 0:
@@ -187,9 +210,9 @@ class ImageProcessor:
     actual_pixels = decoded.numel()
 
     if actual_pixels != expected_pixels:
-      raise ValueError(
+      raise self._image_size_mismatch_error(
         f'Decoded image size mismatch: expected {expected_pixels} pixels ({width}x{height}), '
-        f'got {actual_pixels} pixels. Check --camera-type parameter.'
+        f'got {actual_pixels} pixels.'
       )
 
     return decoded.view(height, width)

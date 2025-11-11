@@ -1,6 +1,5 @@
 """Pipeline controller for managing settings and processing logic."""
 
-from dataclasses import fields, replace
 from pathlib import Path
 
 from beartype import beartype
@@ -10,7 +9,7 @@ import torch
 
 import torch_darktable as td
 from torch_darktable.pipeline.camera_settings import CameraSettings, load_raw_bytes_stripped
-from torch_darktable.pipeline.config import Debayer, ImageProcessingSettings, ToneMapper
+from torch_darktable.pipeline.config import Debayer, Float, ImageProcessingSettings, ToneMapper, get_validator
 from torch_darktable.pipeline.image_processor import ImageProcessor
 from torch_darktable.pipeline.presets import presets
 from torch_darktable.pipeline.transform import ImageTransform, transform
@@ -36,11 +35,11 @@ class PipelineController:
     self.image_transform = image_transform
 
     # Initialize settings with camera default preset
-    self.settings = camera_settings.preset
+    self.settings = camera_settings.image_processing
     self.current_preset = 'default'
 
     # Track modified presets - each preset can have user modifications
-    self.modified_presets = {'default': camera_settings.preset}
+    self.modified_presets = {'default': camera_settings.image_processing}
     for preset_name in presets:
       self.modified_presets[preset_name] = presets[preset_name]
 
@@ -94,7 +93,7 @@ class PipelineController:
 
   def update_setting(self, setting_path: str, value):
     """Update any setting using direct field names."""
-    self.settings = replace(self.settings, **{setting_path: value})
+    self.settings = self.settings.model_copy(update={setting_path: value})
     self._update_pipeline_and_ui()
 
   def _update_pipeline_and_ui(self):
@@ -172,9 +171,6 @@ class PipelineController:
     self.checkboxes = create_checkboxes(checkbox_axes, checkbox_labels, checkbox_values)
     self.checkbox_labels = checkbox_labels
 
-    # Get field metadata for ranges
-    field_metadata = {f.name: f.metadata for f in fields(ImageProcessingSettings)}
-
     # Define all potential sliders - only include those with ranges
     slider_field_definitions = [
       ('tone_gamma', lambda s: s.tone_gamma),
@@ -186,17 +182,14 @@ class PipelineController:
     ]
 
     def create_setter(name):
-      return lambda s, val: replace(s, **{name: val})
+      return lambda s, val: s.model_copy(update={name: val})
 
     slider_definitions = []
     for field_name, getter in slider_field_definitions:
-      meta = field_metadata.get(field_name, {})
-      # Only add sliders for fields with explicit ranges
-      if 'min' in meta and 'max' in meta:
-        min_val = meta['min']
-        max_val = meta['max']
+      validator = get_validator(ImageProcessingSettings, field_name)
+      if isinstance(validator, Float):
         setter = create_setter(field_name)
-        slider_definitions.append((field_name, min_val, max_val, getter, setter))
+        slider_definitions.append((field_name, validator.range[0], validator.range[1], getter, setter))
 
     # Create slider axes and sliders in one loop
     slider_axes = layout_manager.add_slider_group(len(slider_definitions))
