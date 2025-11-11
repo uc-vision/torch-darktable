@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 import warnings
 
 from beartype import beartype
@@ -7,8 +7,7 @@ from pydantic import BaseModel
 import torch
 
 import torch_darktable as td
-from torch_darktable.pipeline.config import ImageProcessingSettings
-from torch_darktable.pipeline.presets import presets
+from torch_darktable.pipeline.config import EnumValidator, ImageProcessingSettings
 from torch_darktable.pipeline.transform import ImageTransform
 
 warnings.filterwarnings('ignore', category=UserWarning, message='The given buffer is not writable')
@@ -22,12 +21,14 @@ class CameraSettings(BaseModel, frozen=True):
   image_size: tuple[int, int]
   padding: int = 0
 
-  bayer_pattern: td.BayerPattern = td.BayerPattern.RGGB
-  packed_format: td.PackedFormat = td.PackedFormat.Packed12
+  bayer_pattern: Annotated[td.BayerPattern, EnumValidator(td.BayerPattern, 'Bayer pattern')] = td.BayerPattern.RGGB
+  packed_format: Annotated[td.PackedFormat, EnumValidator(td.PackedFormat, 'Packed format')] = td.PackedFormat.Packed12
   white_balance: tuple[float, float, float] | None = None
   image_processing: ImageProcessingSettings
 
-  transform: ImageTransform | dict[str, ImageTransform] = ImageTransform.none
+  transform: Annotated[
+    ImageTransform | dict[str, ImageTransform], EnumValidator(ImageTransform, 'Image transform')
+  ] = ImageTransform.none
 
   def get_image_transform(self, camera_name: str) -> ImageTransform:
     if isinstance(self.transform, dict):
@@ -88,54 +89,52 @@ def load_raw_bayer(
   return decoded.view(-1, width)
 
 
-beetroot_transforms = {
-  f'cam{i}': ImageTransform.rotate_270 if i > 6 else ImageTransform.rotate_90 for i in range(1, 13)
-}
+def get_camera_settings_dir() -> Path:
+  """Get the camera settings directory path."""
+  return Path(__file__).parent.parent / 'camera_settings'
 
-camera_settings = dict(
-  artichoke=CameraSettings(
-    name='artichoke',
-    image_size=(4096, 3000),
-    packed_format=td.PackedFormat.Packed12,
-    image_processing=presets['adaptive_aces'],
-    transform=ImageTransform.rotate_270,
-  ),
-  carrot=CameraSettings(
-    name='carrot',
-    image_size=(2472, 2062),
-    packed_format=td.PackedFormat.Packed12_IDS,
-    image_processing=presets['adaptive_aces'],
-    transform=ImageTransform.rotate_270,
-    white_balance=(1.8, 1.0, 2.1),
-  ),
-  beetroot=CameraSettings(
-    name='beetroot',
-    image_size=(2472, 2062),
-    packed_format=td.PackedFormat.Packed12_IDS,
-    image_processing=presets['adaptive_aces'],
-    transform=beetroot_transforms,
-    white_balance=(1.8, 1.0, 2.1),
-  ),
-  pfr=CameraSettings(
-    name='pfr',
-    image_size=(4112, 3008),
-    padding=1536,
-    image_processing=presets['aces'].model_copy(update={'vibrance': 0.0}),
-    packed_format=td.PackedFormat.Packed12,
-    transform=ImageTransform.rotate_270,
-  ),
-)
+
+def get_camera_settings_file(camera_name: str) -> Path:
+  """Get the settings file path for a given camera name."""
+  return get_camera_settings_dir() / f'{camera_name}.json'
+
+
+def load_camera_settings_from_dir(settings_dir: Path | None = None) -> dict[str, CameraSettings]:
+  """Load all camera settings from JSON files in the settings directory."""
+  if settings_dir is None:
+    settings_dir = get_camera_settings_dir()
+
+  settings = {}
+  for json_file in settings_dir.glob('*.json'):
+    camera_setting = CameraSettings.load_json(json_file)
+    settings[camera_setting.name] = camera_setting
+
+  return settings
 
 
 def settings_for_file(file_path: Path) -> CameraSettings:
-  global camera_settings
+  """Get camera settings for a file.
 
-  camera_sizes = {camera_settings.name: camera_settings.bytes for camera_settings in camera_settings.values()}
-  for name, size in camera_sizes.items():
-    if size == file_path.stat().st_size:
-      return camera_settings[name]
+  First tries directory name, then falls back to file size matching.
+  """
+  all_settings = load_camera_settings_from_dir()
 
-  raise ValueError(f'Could not match size of {file_path} with known camera settings {camera_sizes}')
+  # Try directory name first
+  camera_name = file_path.parent.stem
+  if camera_name in all_settings:
+    return all_settings[camera_name]
+
+  # Fallback: match by file size
+  file_size = file_path.stat().st_size
+  for settings in all_settings.values():
+    if settings.bytes == file_size:
+      return settings
+
+  raise ValueError(
+    f'Could not find camera settings for "{file_path}". '
+    f'Directory name "{camera_name}" not recognized and file size {file_size} bytes does not match any known camera. '
+    f'Available cameras: {list(all_settings.keys())}'
+  )
 
 
 @beartype

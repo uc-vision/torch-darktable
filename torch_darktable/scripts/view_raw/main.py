@@ -3,7 +3,7 @@ from pathlib import Path
 
 import torch
 
-from torch_darktable.pipeline.camera_settings import CameraSettings, camera_settings, settings_for_file
+from torch_darktable.pipeline.camera_settings import CameraSettings, load_camera_settings_from_dir
 
 from .pipeline_ui import PipelineController
 from .ui import ProcessRawUI
@@ -17,12 +17,11 @@ def find_image_files(image_path: Path) -> list[Path]:
 
 
 def parse_args():
+  camera_settings = load_camera_settings_from_dir()
   parser = argparse.ArgumentParser(description='Run inference on raw images using ZRR models')
   parser.add_argument('input', type=Path, help='Path to input raw image')
 
-  parser.add_argument(
-    '--camera', type=str, default=None, help='Camera name (one of ' + ', '.join(camera_settings.keys()) + ')'
-  )
+  parser.add_argument('--camera', type=str, required=True, choices=list(camera_settings.keys()), help='Camera name')
   parser.add_argument('--output-dir', type=Path, default=None, help='Output directory for JPEG files (default: /tmp)')
   parser.add_argument('--device', type=str, default='cuda:0', help='Device to use (default: cuda:0)')
 
@@ -52,12 +51,8 @@ def main():
   assert args.input.exists() and args.input.is_file(), f'Error: Input file {args.input} does not exist'
 
   # Get camera settings
-  if args.camera:
-    if args.camera not in camera_settings:
-      raise ValueError(f'Unknown camera: {args.camera}. Available cameras: {list(camera_settings.keys())}')
-    cam_settings = camera_settings[args.camera]
-  else:
-    cam_settings = settings_for_file(args.input)
+  camera_settings = load_camera_settings_from_dir()
+  cam_settings = camera_settings[args.camera]
 
   # Find all images with same extension
   image_files = find_image_files(args.input)

@@ -40,5 +40,5 @@ ext = CUDAExtension(
 setup(
   ext_modules=[ext],
   cmdclass={'build_ext': BuildExtension},
-  package_data={'torch_darktable': ['*.pyi']},
+  package_data={'torch_darktable': ['*.pyi', 'camera_settings/*.json']},
 )

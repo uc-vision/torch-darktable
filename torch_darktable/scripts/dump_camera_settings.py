@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from torch_darktable.pipeline.camera_settings import camera_settings
+from torch_darktable.pipeline.camera_settings import load_camera_settings_from_dir
 
 
 def main():
@@ -14,6 +14,7 @@ def main():
 
   args.output_dir.mkdir(parents=True, exist_ok=True)
 
+  camera_settings = load_camera_settings_from_dir()
   for name, settings in camera_settings.items():
     output_file = args.output_dir / f'{name}.json'
     settings.save_json(output_file)

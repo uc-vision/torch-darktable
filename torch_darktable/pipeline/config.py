@@ -58,11 +58,17 @@ class EnumValidator[TEnum: Enum](Validator):
 
   def __get_pydantic_core_schema__(self, _source_type, _handler: GetCoreSchemaHandler):
     def validate(v):
-      if not isinstance(v, self.enum_type):
-        raise ValueError(f"{v} is not a {self.enum_type.__name__}")
-      return v
+      if isinstance(v, self.enum_type):
+        return v
+      if isinstance(v, str):
+        return self.enum_type[v]
+      if isinstance(v, dict):
+        return {k: self.enum_type[val] if isinstance(val, str) else val for k, val in v.items()}
+      raise ValueError(f"{v} is not a {self.enum_type.__name__}")
 
     def serialize(v):
+      if isinstance(v, dict):
+        return {k: val.name for k, val in v.items()}
       return v.name
 
     return core_schema.no_info_plain_validator_function(

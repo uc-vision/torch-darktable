@@ -5,6 +5,8 @@ from matplotlib.widgets import Button, Slider
 import numpy as np
 import torch
 
+from torch_darktable.pipeline.camera_settings import get_camera_settings_file
+
 from . import jpeg_utils
 from .histogram_window import HistogramWindow
 from .jpeg_preview_window import JpegPreviewWindow
@@ -50,13 +52,14 @@ def create_info_display(layout, image_shape):
 
 
 def create_action_buttons(layout):
-  """Create bottom action buttons (save, reset, levels, jpeg)."""
-  button_rects = layout.add_button_row(4, height=0.06)
+  """Create bottom action buttons (save, reset, save settings, levels, jpeg)."""
+  button_rects = layout.add_button_row(5, height=0.06)
   btn_save = Button(create_clean_axes(button_rects[0]), 'Save JPEG')
   btn_reset = Button(create_clean_axes(button_rects[1]), 'Reset')
-  btn_levels = Button(create_clean_axes(button_rects[2]), 'Show Levels')
-  btn_jpeg = Button(create_clean_axes(button_rects[3]), 'JPEG Preview')
-  return btn_save, btn_reset, btn_levels, btn_jpeg
+  btn_save_settings = Button(create_clean_axes(button_rects[2]), 'Save Settings')
+  btn_levels = Button(create_clean_axes(button_rects[3]), 'Show Levels')
+  btn_jpeg = Button(create_clean_axes(button_rects[4]), 'JPEG Preview')
+  return btn_save, btn_reset, btn_save_settings, btn_levels, btn_jpeg
 
 
 class ProcessRawUI:
@@ -80,6 +83,7 @@ class ProcessRawUI:
     self.output_dir.mkdir(parents=True, exist_ok=True)
 
     self.camera_name = image_files[current_index].parent.stem
+    self.settings_file = get_camera_settings_file(self.camera_settings.name)
 
     self.pipeline_controller.update_display_callback = self._on_pipeline_change
 
@@ -137,7 +141,7 @@ class ProcessRawUI:
     self.index_slider = create_index_slider(layout, len(self.image_files), self.current_index)
     self.pipeline_controller.create_pipeline_ui(layout)
     self.info_text_left, self.info_text_right = create_info_display(layout, self.bayer_image.shape)
-    self.btn_save, self.btn_reset, self.btn_levels, self.btn_jpeg = create_action_buttons(layout)
+    self.btn_save, self.btn_reset, self.btn_save_settings, self.btn_levels, self.btn_jpeg = create_action_buttons(layout)
 
   def _update_and_draw(self):
     """Update display and refresh canvas - common pattern for all callbacks."""
@@ -186,6 +190,11 @@ class ProcessRawUI:
     jpeg_filename = current_path.with_suffix('.jpg').name
     return self.output_dir / jpeg_filename
 
+  def _save_settings(self):
+    """Save current camera settings to JSON file."""
+    self.camera_settings.save_json(self.settings_file)
+    print(f'Saved settings to {self.settings_file}')
+
   def _setup_event_handlers(self):
     """Setup all event handlers."""
     # Parameter handlers
@@ -217,6 +226,9 @@ class ProcessRawUI:
 
     def on_reset(event):
       self.pipeline_controller.reset_current_preset()
+
+    def on_save_settings(event):
+      self._save_settings()
 
     def on_show_levels(event):
       if self.histogram_window is None or not self.histogram_window.is_open():
@@ -252,6 +264,7 @@ class ProcessRawUI:
     # Display mode handlers removed - only normal mode
     self.btn_save.on_clicked(on_save_jpeg)
     self.btn_reset.on_clicked(on_reset)
+    self.btn_save_settings.on_clicked(on_save_settings)
     self.btn_levels.on_clicked(on_show_levels)
     self.btn_jpeg.on_clicked(on_show_jpeg_preview)
     self.btn_prev.on_clicked(on_prev)

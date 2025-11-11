@@ -1,0 +1,51 @@
+{
+  "type": "camera_settings",
+  "name": "beetroot",
+  "image_size": [
+    2472,
+    2062
+  ],
+  "padding": 0,
+  "bayer_pattern": "RGGB",
+  "packed_format": "Packed12_IDS",
+  "white_balance": [
+    1.8,
+    1.0,
+    2.1
+  ],
+  "image_processing": {
+    "type": "image_processing_settings",
+    "tone_gamma": 2.0,
+    "tone_intensity": 1.0,
+    "light_adapt": 0.8,
+    "vibrance": 0.5,
+    "moving_average": 0.02,
+    "debayer": "rcd",
+    "ppg_median_threshold": 0.0,
+    "postprocess": true,
+    "green_eq_threshold": 0.04,
+    "color_smoothing_passes": 3,
+    "enable_bilateral": true,
+    "bilateral": 0.4,
+    "bil_sigma_spatial": 2.0,
+    "bil_sigma_luminance": 0.2,
+    "enable_denoise": true,
+    "denoise": 0.075,
+    "tone_mapping": "aces",
+    "resize_width": 0
+  },
+  "transform": {
+    "cam1": "rotate_90",
+    "cam2": "rotate_90",
+    "cam3": "rotate_90",
+    "cam4": "rotate_90",
+    "cam5": "rotate_90",
+    "cam6": "rotate_90",
+    "cam7": "rotate_270",
+    "cam8": "rotate_270",
+    "cam9": "rotate_270",
+    "cam10": "rotate_270",
+    "cam11": "rotate_270",
+    "cam12": "rotate_270"
+  }
+}
