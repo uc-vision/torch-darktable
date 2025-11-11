@@ -30,6 +30,7 @@ def interactive_debayer(
   image_files: list[Path],
   current_index: int,
   camera_settings: CameraSettings,
+  camera_settings_file: Path,
   device: torch.device,
   output_dir: Path | None = None,
 ) -> None:
@@ -40,7 +41,7 @@ def interactive_debayer(
     camera_settings=camera_settings, device=device, image_transform=image_transform
   )
 
-  ui = ProcessRawUI(image_files, current_index, pipeline_controller, output_dir)
+  ui = ProcessRawUI(image_files, current_index, pipeline_controller, camera_settings_file, output_dir)
   ui.show()
 
 
@@ -62,7 +63,9 @@ def main():
   output_dir = args.output_dir if args.output_dir is not None else Path('/tmp')
   print(f'JPEG files will be saved to: {output_dir.absolute()}')
 
-  interactive_debayer(image_files, current_index, cam_settings, torch.device(args.device), args.output_dir)
+  interactive_debayer(
+    image_files, current_index, cam_settings, args.camera_settings, torch.device(args.device), args.output_dir
+  )
 
 
 if __name__ == '__main__':

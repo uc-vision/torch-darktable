@@ -5,7 +5,7 @@ from matplotlib.widgets import Button, Slider
 import numpy as np
 import torch
 
-from torch_darktable.pipeline.camera_settings import get_camera_settings_file
+from torch_darktable.pipeline.camera_settings import CameraSettings
 
 from . import jpeg_utils
 from .histogram_window import HistogramWindow
@@ -70,6 +70,7 @@ class ProcessRawUI:
     image_files: list[Path],
     current_index: int,
     pipeline_controller: PipelineController,
+    camera_settings_file: Path,
     output_dir: Path | None = None,
   ):
     self.image_files = image_files
@@ -83,7 +84,7 @@ class ProcessRawUI:
     self.output_dir.mkdir(parents=True, exist_ok=True)
 
     self.camera_name = image_files[current_index].parent.stem
-    self.settings_file = get_camera_settings_file(self.camera_settings.name)
+    self.settings_file = camera_settings_file
 
     self.pipeline_controller.update_display_callback = self._on_pipeline_change
 

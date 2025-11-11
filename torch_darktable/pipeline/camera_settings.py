@@ -94,11 +94,6 @@ def get_camera_settings_dir() -> Path:
   return Path(__file__).parent.parent / 'camera_settings'
 
 
-def get_camera_settings_file(camera_name: str) -> Path:
-  """Get the settings file path for a given camera name."""
-  return get_camera_settings_dir() / f'{camera_name}.json'
-
-
 def load_camera_settings_from_dir(settings_dir: Path | None = None) -> dict[str, CameraSettings]:
   """Load all camera settings from JSON files in the settings directory."""
   if settings_dir is None:
