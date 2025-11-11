@@ -47,7 +47,7 @@ std::shared_ptr<Wiener> create_wiener(torch::Device device, int width, int heigh
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wattributes"
 
-PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+PYBIND11_MODULE(torch_darktable_extension, m) {
     // Minimal helper to reduce boilerplate for bulk setters
  
 

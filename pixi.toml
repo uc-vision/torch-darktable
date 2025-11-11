@@ -1,0 +1,35 @@
+[workspace]
+channels = ["https://prefix.dev/conda-forge"]
+platforms = ["linux-64"]
+preview = ["pixi-build"]
+
+[system-requirements]
+cuda = "12"
+libc = { family = "glibc", version = "2.34" }
+
+[dependencies]
+torch_darktable = { path = "." }
+cuda = ">=12.9"
+pytorch-gpu = ">=2.7"
+
+[package]
+name = "torch_darktable"
+version = "0.1.5"
+
+[package.build]
+backend = { name = "pixi-build-python", version = "0.4.*" }
+
+[package.host-dependencies]
+hatchling = ">=1.26.3"
+pip = "*"
+python = ">=3.10"
+
+[package.run-dependencies]
+torch_darktable_cuda = { path = "torch_darktable_cuda" }
+pytorch-gpu = ">=2.7"
+numpy = "*"
+pillow = "*"
+beartype = "*"
+opencv = "*"
+matplotlib = "*"
+

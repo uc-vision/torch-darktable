@@ -1,0 +1,28 @@
+[package]
+name = "torch_darktable_cuda"
+version = "0.1.5"
+
+[package.build]
+backend = { name = "pixi-build-cmake", version = "0.3.*" }
+
+
+[system-requirements]
+cuda = "12"
+
+[package.build-dependencies]
+cuda = ">=12.9"
+pybind11 = "*"
+pytorch-gpu = ">=2.7"
+python = "3.12.*"
+
+
+[package.host-dependencies]
+cmake = ">=3.20"
+cuda = ">=12.9"
+python = "3.12.*"
+pip = "*"
+pybind11 = "*"
+pytorch-gpu = ">=2.7"
+gcc = "*"
+gxx = "*"
+libstdcxx = "*"
