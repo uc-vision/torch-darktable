@@ -1,8 +1,9 @@
-from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Literal
 import warnings
 
 from beartype import beartype
+from pydantic import BaseModel
 import torch
 
 import torch_darktable as td
@@ -14,8 +15,9 @@ warnings.filterwarnings('ignore', category=UserWarning, message='The given buffe
 
 
 @beartype
-@dataclass(frozen=True, kw_only=True)
-class CameraSettings:
+class CameraSettings(BaseModel, frozen=True):
+  type: Literal['camera_settings'] = 'camera_settings'
+
   name: str
   image_size: tuple[int, int]
   padding: int = 0
@@ -23,7 +25,7 @@ class CameraSettings:
   bayer_pattern: td.BayerPattern = td.BayerPattern.RGGB
   packed_format: td.PackedFormat = td.PackedFormat.Packed12
   white_balance: tuple[float, float, float] | None = None
-  preset: ImageProcessingSettings
+  image_processing: ImageProcessingSettings
 
   transform: ImageTransform | dict[str, ImageTransform] = ImageTransform.none
 
@@ -35,6 +37,17 @@ class CameraSettings:
   @property
   def bytes(self) -> int:
     return ((self.image_size[0] * self.image_size[1] * 3) // 2) + self.padding
+
+  @beartype
+  def save_json(self, path: Path) -> None:
+    """Save settings to a JSON file."""
+    path.write_text(self.model_dump_json(indent=2))
+
+  @classmethod
+  @beartype
+  def load_json(cls, path: Path) -> 'CameraSettings':
+    """Load settings from a JSON file."""
+    return cls.model_validate_json(path.read_text())
 
 
 @beartype
@@ -84,14 +97,14 @@ camera_settings = dict(
     name='artichoke',
     image_size=(4096, 3000),
     packed_format=td.PackedFormat.Packed12,
-    preset=presets['adaptive_aces'],
+    image_processing=presets['adaptive_aces'],
     transform=ImageTransform.rotate_270,
   ),
   carrot=CameraSettings(
     name='carrot',
     image_size=(2472, 2062),
     packed_format=td.PackedFormat.Packed12_IDS,
-    preset=presets['adaptive_aces'],
+    image_processing=presets['adaptive_aces'],
     transform=ImageTransform.rotate_270,
     white_balance=(1.8, 1.0, 2.1),
   ),
@@ -99,7 +112,7 @@ camera_settings = dict(
     name='beetroot',
     image_size=(2472, 2062),
     packed_format=td.PackedFormat.Packed12_IDS,
-    preset=presets['adaptive_aces'],
+    image_processing=presets['adaptive_aces'],
     transform=beetroot_transforms,
     white_balance=(1.8, 1.0, 2.1),
   ),
@@ -107,7 +120,7 @@ camera_settings = dict(
     name='pfr',
     image_size=(4112, 3008),
     padding=1536,
-    preset=replace(presets['aces'], vibrance=0.0),
+    image_processing=presets['aces'].model_copy(update={'vibrance': 0.0}),
     packed_format=td.PackedFormat.Packed12,
     transform=ImageTransform.rotate_270,
   ),

@@ -12,7 +12,8 @@ dependencies = [
     "torch>=2.4.0",
     "numpy",
     "pillow",
-    "beartype"
+    "beartype",
+    "pydantic"
 ]
 
 [project.scripts]
@@ -24,6 +25,7 @@ test-denoise = "torch_darktable.scripts.test_wiener:main"
 test-jpeg = "torch_darktable.scripts.test_jpeg:main"
 run-benchmark = "torch_darktable.scripts.run_benchmark:main"
 view-raw = "torch_darktable.scripts.view_raw.main:main"
+dump-camera-settings = "torch_darktable.scripts.dump_camera_settings:main"
 
 [tool.setuptools.packages.find]
 include = ["torch_darktable*"]
